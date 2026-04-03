@@ -203,14 +203,16 @@ async def scan_uncommon(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(res))
 
 # ================= MAIN RUNNER =================
+# ================= MAIN RUNNER =================
 async def main():
     # 1. Initialize Telethon Clients
     await init_clients()
     
     if not clients:
-        logger.error("❌ No authorized clients found. Bot will not work for checks.")
+        logger.error("❌ No authorized clients found. Check your session files.")
 
-    # 2. Setup Telegram Bot
+    # 2. Build the Application
+    # Note: We don't use run_polling() here because we are managing the loop
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     
     application.add_handler(CommandHandler("login", login))
@@ -221,19 +223,33 @@ async def main():
     application.add_handler(CommandHandler("scanganhur", scan_ganhur))
     application.add_handler(CommandHandler("scanuncommon", scan_uncommon))
 
-    # 3. Use async context manager to prevent "Running Loop" errors
+    # 3. Correct Manual Startup Sequence
     async with application:
+        # Initialize the bot's internal state
         await application.initialize()
-        await application.start_polling()
         
-        logger.info("🚀 BOT READY ON RAILWAY")
+        # Start the updater (this is where the polling actually begins)
+        if application.updater:
+            await application.updater.start_polling()
         
-        # 4. Keep alive
-        while True:
-            await asyncio.sleep(3600)
+        # Start the application logic
+        await application.start()
+        
+        logger.info("🚀 BOT READY & POLLING ON RAILWAY")
+        
+        # 4. Keep the loop alive so Telethon and the Bot stay active
+        try:
+            while True:
+                await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            # Handle shutdown gracefully
+            await application.updater.stop()
+            await application.stop()
+            await application.shutdown()
 
 if __name__ == "__main__":
     try:
+        # Use run() for Python 3.7+
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         pass
