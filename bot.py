@@ -70,7 +70,7 @@ def get_available_client():
 def auth(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_user.id not in AUTHORIZED_USERS:
-            await update.message.reply_text("🔒 Silahkan /login <password> terlebih dahulu.")
+            await update.message.reply_text("/login dulu.")
             return
         return await func(update, context)
     return wrapper
@@ -79,9 +79,9 @@ def auth(func):
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args and context.args[0] == PASSWORD:
         AUTHORIZED_USERS.add(update.effective_user.id)
-        await update.message.reply_text("✅ Login sukses!")
+        await update.message.reply_text("Slmt")
     else:
-        await update.message.reply_text("❌ Password salah.")
+        await update.message.reply_text("Salah, yg bener aja")
 
 async def check_one(client, username):
     try:
