@@ -9,9 +9,11 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 # =====================
 # CONFIG
 # =====================
-api_id = 30573526
-api_hash = "eeaa1875aed258d30417380c754accb8"
-bot_token = "8630533699:AAHpcLLh8bUBJavM4WJ_-b7cacrPlhW4rLw"
+import os
+
+api_id = int(os.getenv("API_ID"))
+api_hash = os.getenv("API_HASH")
+bot_token = os.getemv("BOT_TOKEN")
 
 PASSWORD = "kucing"
 
