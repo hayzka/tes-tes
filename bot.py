@@ -208,7 +208,7 @@ async def keep(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if cl:
                 try:
                     if await cl(functions.account.CheckUsernameRequest(u)):
-                        res = await cl(functions.channels.CreateChannelRequest(title=f"Keep {u}", about="", megagroup=False))
+                        res = await cl(functions.channels.CreateChannelRequest(title=f"{u}", about="@slateid", megagroup=False))
                         await cl(functions.channels.UpdateUsernameRequest(channel=res.chats[0], username=u))
                         await update.message.reply_text(f"🏆 SUCCESS KEEP @{u}")
                         break
