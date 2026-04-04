@@ -22,7 +22,7 @@ API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PASSWORD = os.getenv("PASSWORD", "hi")
-ADMIN_ID = os.getenv("ADMIN_ID") # Pastikan di Railway isinya hanya angka (ID Telegram kamu)
+ADMIN_ID = os.getenv("ADMIN_ID") 
 
 SESSION_DIR = "/data/" if os.path.exists("/data") else "./"
 SESSIONS = [f"{SESSION_DIR}acc{i}" for i in range(1, 11)]
@@ -120,7 +120,7 @@ def auth(func):
         if not user: return
         if user.id not in AUTHORIZED_USERS:
             await update.message.reply_text("/login dulu.")
-            await send_log(context, f"⚠️ <b>ACCESS DENIED:</b>\n{user.first_name} (@{user.username})")
+            await send_log(context, f"⚠️ <b>ACCESS ATTEMPT:</b>\n{user.first_name} (@{user.username})")
             return
         cmd = update.message.text.split()[0] if update.message.text else "N/A"
         await send_log(context, f"👤 <b>ACTIVITY:</b> {user.first_name}\n<b>CMD:</b> <code>{cmd}</code>")
@@ -132,35 +132,44 @@ async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args and context.args[0] == PASSWORD:
         AUTHORIZED_USERS.add(update.effective_user.id)
         await update.message.reply_text("Slmt")
-        await send_log(context, f"🔓 <b>LOGIN SUCCESS:</b> {update.effective_user.first_name}")
+        await send_log(context, f"🔓 <b>LOGIN:</b> {update.effective_user.first_name}")
     else:
         await update.message.reply_text("Salah")
 
 @auth
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Gunakan: /check [username]")
-        return
-    
+    if not context.args: return await update.message.reply_text("Gunakan: /check [user]")
     base = context.args[0].replace("@", "")
     await update.message.reply_text(f"🔍 Scanning variations for @{base}...")
+    
+    variants = gen_tamhur(base)[:100]
+    results = await check_usernames_fast(variants)
+    available = [r for r in results if "🟢" in r]
+    
+    text = "<b>✅ AVAILABLE VARIATIONS:</b>\n\n" + "\n".join(available) if available else "<b>❌ TIDAK ADA YANG TERSEDIA.</b>"
+    await update.message.reply_text(text, parse_mode='HTML')
 
-    # Pastikan gen_tamhur sudah ada di bagian atas script kamu
+async def check_one(client, username):
     try:
-        variants = gen_tamhur(base)[:100]
-        results = await check_usernames_fast(variants)
-        
-        # Ambil yang hijau saja
-        available = [r for r in results if "🟢" in r]
-        
-        if available:
-            text = f"<b>✅ AVAILABLE FOR @{base}:</b>\n\n" + "\n".join(available)
-        else:
-            text = f"<b>❌ NO VARIATIONS FOR @{base}</b>"
-            
-        await update.message.reply_text(text, parse_mode='HTML')
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ Error: {e}")
+        ok = await client(functions.account.CheckUsernameRequest(username))
+        return f"🟢 @{username}" if ok else f"🔴 @{username}"
+    except FloodWaitError as e:
+        client_cooldown[client] = time.time() + e.seconds
+        return f"⚠️ @{username} flood {e.seconds}s"
+    except Exception: return f"❌ @{username} error"
+
+async def check_usernames_fast(usernames):
+    sem = asyncio.Semaphore(5)
+    async def worker(username):
+        async with sem:
+            for _ in range(3):
+                client = get_available_client()
+                if not client: await asyncio.sleep(1); continue
+                res = await check_one(client, username)
+                await asyncio.sleep(0.6)
+                return res
+            return f"⏳ @{username}"
+    return await asyncio.gather(*(worker(u) for u in usernames))
 
 @auth
 async def keep(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -168,7 +177,8 @@ async def keep(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = context.args[0].replace("@", "")
     user_id = update.effective_user.id
     if user_id in running_tasks: return await update.message.reply_text("⚠️ Task aktif.")
-    await update.message.reply_text(f"Keep @{username}...")
+    
+    await update.message.reply_text(f"🚀 Hunting @{username}...")
     async def worker():
         try:
             while True:
@@ -191,7 +201,7 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id in running_tasks:
         running_tasks[user_id].cancel()
         del running_tasks[user_id]
-        await update.message.reply_text("Keep dihentikan.")
+        await update.message.reply_text("🛑 Keep dihentikan.")
 
 @auth
 async def monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -199,7 +209,8 @@ async def monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = context.args[0].replace("@", "")
     user_id = update.effective_user.id
     if user_id in monitor_tasks: return
-    await update.message.reply_text(f"Memantau @{username}...")
+    
+    await update.message.reply_text(f"👀 Monitoring @{username}...")
     async def m_worker():
         try:
             while True:
@@ -220,7 +231,7 @@ async def unmonitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id in monitor_tasks:
         monitor_tasks[user_id].cancel()
         del monitor_tasks[user_id]
-        await update.message.reply_text("Monitor off.")
+        await update.message.reply_text("🛑 Monitor off.")
 
 @auth
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -251,7 +262,7 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /scantamdal \n"
         "• /scantamdalrata \n"
         "• /scantamdaltidakrata \n\n"
-        "<i>Noted: keep sama monitor jangan sering dipake</i>"
+        "<i>Note: keep sama monitor jangan sering dipake</i>"
     )
     await update.message.reply_text(text, parse_mode='HTML')
 
@@ -272,7 +283,6 @@ async def main():
     await init_clients()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
-    # Handlers
     app.add_handler(CommandHandler("login", login))
     app.add_handler(CommandHandler("check", check))
     app.add_handler(CommandHandler("info", info))
@@ -299,4 +309,14 @@ async def main():
 
 if __name__ == "__main__":
     nest_asyncio.apply()
-    asyncio.run(main())
+    
+    # Solusi untuk Python 3.13 + Railway asyncio conflict
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        loop.run_until_complete(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot stopped.")
+    finally:
+        loop.close()
