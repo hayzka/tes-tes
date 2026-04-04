@@ -138,35 +138,30 @@ async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @auth
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args: return await update.message.reply_text("Gunakan: /check user1 user2")
-    usernames = [u.replace("@", "") for u in context.args]
-    await update.message.reply_text(f"🔍 Checking {len(usernames)} usernames...")
-    results = await check_usernames_fast(usernames)
+    if not context.args:
+        return await update.message.reply_text("Gunakan: /check [username]")
+    
+    base = context.args[0].replace("@", "")
+    await update.message.reply_text(f"🔍 Checking all variations for @{base}...")
+
+    # 1. Generate variasi (menggunakan logika tamhur)
+    variants = gen_tamhur(base)[:100] # Limit 100 agar tidak flood
+    
+    # 2. Cek ketersediaan secara cepat
+    results = await check_usernames_fast(variants)
+    
+    # 3. Filter: Hanya ambil yang 🟢 (Tersedia)
     available = [r for r in results if "🟢" in r]
-    text = "<b>✅ TERSEDIA:</b>\n\n" + "\n".join(available) if available else "<b>❌ TIDAK ADA YANG TERSEDIA.</b>"
+    
+    if available:
+        # Kirim hasil yang tersedia saja
+        text = f"<b>✅ TARGETS FOUND FOR @{base}:</b>\n\n"
+        text += "\n".join(available)
+        text += "\n\n<i>Gunakan /keep [user] untuk mengamankan.</i>"
+    else:
+        text = f"<b>❌ NO VARIATIONS AVAILABLE</b>\nSemua variasi untuk @{base} sudah terpakai."
+        
     await update.message.reply_text(text, parse_mode='HTML')
-
-async def check_one(client, username):
-    try:
-        ok = await client(functions.account.CheckUsernameRequest(username))
-        return f"🟢 @{username}" if ok else f"🔴 @{username}"
-    except FloodWaitError as e:
-        client_cooldown[client] = time.time() + e.seconds
-        return f"⚠️ @{username} flood {e.seconds}s"
-    except Exception: return f"❌ @{username} error"
-
-async def check_usernames_fast(usernames):
-    sem = asyncio.Semaphore(5)
-    async def worker(username):
-        async with sem:
-            for _ in range(3):
-                client = get_available_client()
-                if not client: await asyncio.sleep(1); continue
-                res = await check_one(client, username)
-                await asyncio.sleep(0.6)
-                return res
-            return f"⏳ @{username} (No clients)"
-    return await asyncio.gather(*(worker(u) for u in usernames))
 
 @auth
 async def keep(update: Update, context: ContextTypes.DEFAULT_TYPE):
