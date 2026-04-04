@@ -344,13 +344,9 @@ async def main():
     for cmd, gen, lbl in commands:
         application.add_handler(CommandHandler(cmd, create_scan_handler(gen, lbl)))
 
-    async with application:
-        await application.initialize()
-        if application.updater: await application.updater.start_polling()
-        await application.start()
-        logger.info("🚀 BOT READY ON RAILWAY")
-        while True: await asyncio.sleep(3600)
+    if __name__ == "__main__":
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    # ... (all your add_handler lines here) ...
 
-if __name__ == "__main__":
-    try: asyncio.run(main())
-    except: pass
+    logger.info("🚀 BOT STARTING POLLING")
+    application.run_polling(drop_pending_updates=True)
