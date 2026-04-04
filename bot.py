@@ -133,18 +133,24 @@ def get_available_client():
     return client
 
 async def send_log(context: ContextTypes.DEFAULT_TYPE, message: str):
-    admin_id_env = os.getenv("ADMIN_ID")
+    # Ambil dari env setiap kali dipanggil agar fresh
+    admin_env = os.getenv("ADMIN_ID")
     
-    if not admin_id_env:
-        logger.warning("⚠️ ADMIN_ID tidak ditemukan di environment variables.")
+    if not admin_env:
+        logger.warning("⚠️ ADMIN_ID missing in Railway Variables!")
         return
 
     try:
+        # WAJIB diubah ke int() agar Telegram tidak menolak
+        target_id = int(admin_env)
         await context.bot.send_message(
-            chat_id=int(admin_id_env), 
-            text=message, 
+            chat_id=target_id,
+            text=message,
             parse_mode='HTML'
         )
+        logger.info(f"📩 Log sent to {target_id}")
+    except ValueError:
+        logger.error(f"❌ ADMIN_ID di Railway bukan angka: {admin_env}")
     except Exception as e:
         logger.error(f"❌ Gagal kirim log: {e}")
 
@@ -154,18 +160,17 @@ def auth(func):
         user = update.effective_user
         
         if user.id not in AUTHORIZED_USERS:
-            await update.message.reply_text("❌ Akses ditolak. Silakan /login [password] dulu.")
-            # Kirim log percobaan akses ilegal ke kamu (Admin)
-            await send_log(context, f"⚠️ <b>PERCOBAAN AKSES:</b>\nUser: {user.first_name} (@{user.username})\nID: <code>{user.id}</code>\nmencoba akses tanpa login.")
+            await update.message.reply_text("/login dulu.")
+            # LAPOR PERCOBAAN LOGIN 👇
+            await send_log(context, f"⚠️ <b>UNAUTHORIZED:</b>\n{user.first_name} (@{user.username}) mencoba akses.")
             return
         
-        # log notif
-        cmd = update.message.text.split()[0] if update.message.text else "Unknown"
-        await send_log(context, f"👤 <b>USER ACTIVITY:</b>\nUser: {user.first_name} (@{user.username})\nCommand: <code>{cmd}</code>")
+        # LAPOR AKTIVITAS USER 👇
+        cmd = update.message.text.split()[0] if update.message.text else "N/A"
+        await send_log(context, f"👤 <b>USER:</b> {user.first_name}\n<b>CMD:</b> <code>{cmd}</code>")
         
         return await func(update, context)
     return wrapper
-
 # commands
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args and context.args[0] == PASSWORD:
