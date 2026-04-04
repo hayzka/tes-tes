@@ -21,6 +21,7 @@ API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PASSWORD = os.getenv("PASSWORD", "hi")
+ADMIN_ID = os.getenv("ADMIN_ID")
 
 SESSION_DIR = "/data/" if os.path.exists("/data") else "./"
 SESSIONS = [f"{SESSION_DIR}acc{i}" for i in range(1, 11)]
@@ -44,6 +45,18 @@ def gen_switch(b):
         lst[i], lst[i+1] = lst[i+1], lst[i]
         res.add("".join(lst))
     return list(res)
+    
+def gen_uncommon(b):
+    if not b: return []
+    return list({b[:i] + b[i] + b[i:] for i in range(len(b))})
+
+def gen_tamhur(b):
+    letters = string.ascii_lowercase
+    return list({b[:i] + l + b[i:] for i in range(len(b)+1) for l in letters})
+
+def gen_ganhur(b):
+    letters = string.ascii_lowercase
+    return list({b[:i] + l + b[i+1:] for i in range(len(b)) for l in letters})
 
 def gen_kurhur(b):
     if len(b) <= 1: return []
@@ -119,11 +132,27 @@ def get_available_client():
     client_index += 1
     return client
 
+async def send_log(context: ContextTypes.DEFAULT_TYPE, message: str):
+    try:
+        await context.bot.send_message(chat_id=ADMIN_ID, text=message, parse_mode='HTML')
+    except Exception as e:
+        logger.error(f"Gagal kirim log: {e}")
+
+# AUTH DECORATOR 
 def auth(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.effective_user.id not in AUTHORIZED_USERS:
-            await update.message.reply_text("/login dulu.")
+        user = update.effective_user
+        
+        if user.id not in AUTHORIZED_USERS:
+            await update.message.reply_text("❌ Akses ditolak. Silakan /login [password] dulu.")
+            # Kirim log percobaan akses ilegal ke kamu (Admin)
+            await send_log(context, f"⚠️ <b>PERCOBAAN AKSES:</b>\nUser: {user.first_name} (@{user.username})\nID: <code>{user.id}</code>\nmencoba akses tanpa login.")
             return
+        
+        # log notif
+        cmd = update.message.text.split()[0] if update.message.text else "Unknown"
+        await send_log(context, f"👤 <b>USER ACTIVITY:</b>\nUser: {user.first_name} (@{user.username})\nCommand: <code>{cmd}</code>")
+        
         return await func(update, context)
     return wrapper
 
@@ -134,6 +163,26 @@ async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Slmt")
     else:
         await update.message.reply_text("Salah")
+
+@auth
+async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        return await update.message.reply_text("Gunakan: /check user1 user2")
+    
+    usernames = [u.replace("@", "") for u in context.args]
+    await update.message.reply_text(f" Checking {len(usernames)} usernames...")
+    
+    results = await check_usernames_fast(usernames)
+    
+    available = [r for r in results if "🟢" in r]
+    
+    if available:
+        text = "<b>✅ USERNAME TERSEDIA:</b>\n\n" + "\n".join(available)
+        text += "\n\n<i>Silakan gunakan /keep [user] segera!</i>"
+    else:
+        text = "<b>❌ HASIL CHECK:</b>\nSemua username sedang digunakan atau kena limit."
+        
+    await update.message.reply_text(text, parse_mode='HTML')
 
 async def check_one(client, username):
     try:
@@ -263,10 +312,13 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>Scanning:</b>\n"
         "• /scanswitch \n"
         "• /scankurhur \n"
+        "• /scanganhur \n\n"
+
+        "<b>Scanning:</b>\n"
         "• /scancadel - 'wycl'\n"
         "• /scancanon - Tambah 's' / ubah i-l\n\n"
-        
-        "<b>Scanning:</b>\n"
+        "• /scanuncommon - sop\n"
+        "• /scantamhur \n"
         "• /scanrata - tamhur rata\n"
         "• /scantidakrata - tamhur gak rata\n"
         "• /scanvokal - tamhur vokal\n\n"
@@ -274,7 +326,7 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>Scanning Tamping:</b>\n"
         "• /scantamping \n"
         "• /scantampingrata \n"
-        "• /scantampingtidakrata \n"
+        "• /scantampingtidakrata \n\n"
 
          "<b>Scanning Tamdal:</b>\n"
         "• /scantamdal \n"
@@ -326,6 +378,7 @@ async def main():
     
     # 3. Masukkan semua Handler (PENTING: Harus ada di dalam main)
     application.add_handler(CommandHandler("login", login))
+    application.add_handler(CommandHandler("check", check))
     application.add_handler(CommandHandler("info", info))
     application.add_handler(CommandHandler("keep", keep))
     application.add_handler(CommandHandler("stop", stop))
@@ -336,6 +389,9 @@ async def main():
     commands = [
         ("scantamping", gen_tamping, "Tamping"),
         ("scanswitch", gen_switch, "Switch"),
+        ("scantamhur", gen_tamhur, "Tamhur"),
+        ("scanganhur", gen_ganhur, "Ganhur"),
+        ("scanuncommon", gen_uncommon, "Uncommon"),
         ("scankurhur", gen_kurhur, "Kurhur"),
         ("scancanon", gen_canon, "Canon"),
         ("scanrata", gen_rata, "Rata"),
