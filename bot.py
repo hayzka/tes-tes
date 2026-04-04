@@ -56,7 +56,6 @@ def gen_canon(b):
     for i, char in enumerate(b):
         if char in mapping:
             res.add(b[:i] + mapping[char] + b[i+1:])
-            res.add(variasi)
     return list(res)
 
 rata = "asweruiozxcvnm"
@@ -291,12 +290,27 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def create_scan_handler(gen_func, label):
     @auth
     async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not context.args: return
+        if not context.args: 
+            await update.message.reply_text(f"Gunakan: /{label.lower()} [username]")
+            return
+        
         base = context.args[0].replace("@", "")
         variants = gen_func(base)[:100]
-        await update.message.reply_text(f"🔍 Scanning {label} @{base}...")
+        
+        if not clients:
+            await update.message.reply_text("❌ Tidak ada akun (clients) yang siap!")
+            return
+
+        await update.message.reply_text(f"Scanning {label} @{base}...")
         res = await check_usernames_fast(variants)
-        await update.message.reply_text("\n".join(res))
+        
+        # Split message if it's too long for Telegram
+        response_text = "\n".join(res)
+        if len(response_text) > 4096:
+            for i in range(0, len(response_text), 4096):
+                await update.message.reply_text(response_text[i:i+4096])
+        else:
+            await update.message.reply_text(response_text)
     return handler
 
 # main 
