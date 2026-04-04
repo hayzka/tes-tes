@@ -356,10 +356,10 @@ async def main():
     application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
+    import nest_asyncio
+    nest_asyncio.apply() # This prevents "Event loop is already running" errors
+    
     try:
-        # We use asyncio.run to start the main function
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Bot stopped.")
-    except Exception as e:
-        logger.error(f"Fatal Error: {e}")
+        pass
