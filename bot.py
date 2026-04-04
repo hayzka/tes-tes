@@ -133,10 +133,20 @@ def get_available_client():
     return client
 
 async def send_log(context: ContextTypes.DEFAULT_TYPE, message: str):
+    admin_id_env = os.getenv("ADMIN_ID")
+    
+    if not admin_id_env:
+        logger.warning("⚠️ ADMIN_ID tidak ditemukan di environment variables.")
+        return
+
     try:
-        await context.bot.send_message(chat_id=ADMIN_ID, text=message, parse_mode='HTML')
+        await context.bot.send_message(
+            chat_id=int(admin_id_env), 
+            text=message, 
+            parse_mode='HTML'
+        )
     except Exception as e:
-        logger.error(f"Gagal kirim log: {e}")
+        logger.error(f"❌ Gagal kirim log: {e}")
 
 # AUTH DECORATOR 
 def auth(func):
