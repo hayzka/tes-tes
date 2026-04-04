@@ -139,29 +139,28 @@ async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @auth
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        return await update.message.reply_text("Gunakan: /check [username]")
+        await update.message.reply_text("Gunakan: /check [username]")
+        return
     
     base = context.args[0].replace("@", "")
-    await update.message.reply_text(f"🔍 Checking all variations for @{base}...")
+    await update.message.reply_text(f"🔍 Scanning variations for @{base}...")
 
-    # 1. Generate variasi (menggunakan logika tamhur)
-    variants = gen_tamhur(base)[:100] # Limit 100 agar tidak flood
-    
-    # 2. Cek ketersediaan secara cepat
-    results = await check_usernames_fast(variants)
-    
-    # 3. Filter: Hanya ambil yang 🟢 (Tersedia)
-    available = [r for r in results if "🟢" in r]
-    
-    if available:
-        # Kirim hasil yang tersedia saja
-        text = f"<b>✅ TARGETS FOUND FOR @{base}:</b>\n\n"
-        text += "\n".join(available)
-        text += "\n\n<i>Gunakan /keep [user] untuk mengamankan.</i>"
-    else:
-        text = f"<b>❌ NO VARIATIONS AVAILABLE</b>\nSemua variasi untuk @{base} sudah terpakai."
+    # Pastikan gen_tamhur sudah ada di bagian atas script kamu
+    try:
+        variants = gen_tamhur(base)[:100]
+        results = await check_usernames_fast(variants)
         
-    await update.message.reply_text(text, parse_mode='HTML')
+        # Ambil yang hijau saja
+        available = [r for r in results if "🟢" in r]
+        
+        if available:
+            text = f"<b>✅ AVAILABLE FOR @{base}:</b>\n\n" + "\n".join(available)
+        else:
+            text = f"<b>❌ NO VARIATIONS FOR @{base}</b>"
+            
+        await update.message.reply_text(text, parse_mode='HTML')
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Error: {e}")
 
 @auth
 async def keep(update: Update, context: ContextTypes.DEFAULT_TYPE):
