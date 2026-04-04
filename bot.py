@@ -314,23 +314,25 @@ def create_scan_handler(gen_func, label):
     return handler
 
 # main 
-# main 
+# ... (Semua fungsi gen, auth, login, info, dll di atas sini) ...
+
+# --- LETAKKAN DI SINI ---
 async def main():
-    # 1. Start the Telethon worker clients
+    # 1. Menyalakan worker Telethon
     await init_clients()
     
-    # 2. Build the Bot Application
+    # 2. Setup Application Bot
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     
-    # 3. Add Core Commands
+    # 3. Masukkan semua Handler (PENTING: Harus ada di dalam main)
     application.add_handler(CommandHandler("login", login))
-    application.add_handler(CommandHandler("info", info)) 
+    application.add_handler(CommandHandler("info", info))
     application.add_handler(CommandHandler("keep", keep))
     application.add_handler(CommandHandler("stop", stop))
     application.add_handler(CommandHandler("monitor", monitor))   
     application.add_handler(CommandHandler("unmonitor", unmonitor)) 
 
-    # 4. Add Scan Commands
+    # Looping untuk Scan Commands
     commands = [
         ("scantamping", gen_tamping, "Tamping"),
         ("scanswitch", gen_switch, "Switch"),
@@ -346,20 +348,28 @@ async def main():
         ("scantamdaltidakrata", gen_tamdaltidakrata, "Tamdal Tdk Rata"),
         ("scancadel", gen_cadel, "Cadel"),
     ]
-    
     for cmd, gen, lbl in commands:
         application.add_handler(CommandHandler(cmd, create_scan_handler(gen, lbl)))
 
-    # 5. Start Polling
-    logger.info("🚀 BOT STARTING POLLING")
-    # run_polling is blocking, so it stays running here
-    application.run_polling(drop_pending_updates=True)
+    # 4. Start Manual (Cara paling aman buat Railway)
+    await application.initialize()
+    await application.start()
+    
+    if application.updater:
+        await application.updater.start_polling(drop_pending_updates=True)
+    
+    logger.info("🚀 BOT IS LIVE AND POLLING")
 
+    # 5. Menjaga agar script tidak mati
+    while True:
+        await asyncio.sleep(3600)
+
+# Blok eksekusi paling bawah
 if __name__ == "__main__":
     import nest_asyncio
-    nest_asyncio.apply() # This prevents "Event loop is already running" errors
+    nest_asyncio.apply()
     
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        pass
+        logger.info("Bot stopped.")
