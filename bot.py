@@ -314,18 +314,23 @@ def create_scan_handler(gen_func, label):
     return handler
 
 # main 
+# main 
 async def main():
+    # 1. Start the Telethon worker clients
     await init_clients()
+    
+    # 2. Build the Bot Application
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     
-    # Core Commands
+    # 3. Add Core Commands
     application.add_handler(CommandHandler("login", login))
+    application.add_handler(CommandHandler("info", info)) 
     application.add_handler(CommandHandler("keep", keep))
     application.add_handler(CommandHandler("stop", stop))
     application.add_handler(CommandHandler("monitor", monitor))   
     application.add_handler(CommandHandler("unmonitor", unmonitor)) 
 
-    # Scan Commands
+    # 4. Add Scan Commands
     commands = [
         ("scantamping", gen_tamping, "Tamping"),
         ("scanswitch", gen_switch, "Switch"),
@@ -341,12 +346,20 @@ async def main():
         ("scantamdaltidakrata", gen_tamdaltidakrata, "Tamdal Tdk Rata"),
         ("scancadel", gen_cadel, "Cadel"),
     ]
+    
     for cmd, gen, lbl in commands:
         application.add_handler(CommandHandler(cmd, create_scan_handler(gen, lbl)))
 
-    if __name__ == "__main__":
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
-    # ... (all your add_handler lines here) ...
-
+    # 5. Start Polling
     logger.info("🚀 BOT STARTING POLLING")
+    # run_polling is blocking, so it stays running here
     application.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    try:
+        # We use asyncio.run to start the main function
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot stopped.")
+    except Exception as e:
+        logger.error(f"Fatal Error: {e}")
