@@ -5,16 +5,13 @@ import time
 import logging
 import random
 import nest_asyncio
-from telethon import TelegramClient, functions
-from telethon.errors import FloodWaitError
+from telethon import TelegramClient, functions, types
+from telethon.errors import FloodWaitError, ChannelsAdminPublicFreeError, UsernameOccupiedError, UsernameInvalidError
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # ================== LOGGING ==================
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ================== CONFIG ==================
@@ -24,7 +21,12 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 PASSWORD = os.getenv("PASSWORD", "hi")
 ADMIN_ID = os.getenv("ADMIN_ID") 
 
-SESSION_DIR = "/data/" if os.path.exists("/data") else "./"
+# Cek apakah jalan di Railway (folder /data) atau lokal/github (root)
+if os.path.exists("/data"):
+    SESSION_DIR = "/data/"
+else:
+    SESSION_DIR = "./"
+
 SESSIONS = [f"{SESSION_DIR}acc{i}" for i in range(1, 11)]
 
 AUTHORIZED_USERS = set()
@@ -34,45 +36,24 @@ running_tasks = {}
 monitor_tasks = {}
 client_index = 0
 
-# ================== GENERATORS ==================
-def gen_tamhur(b):
-    letters = string.ascii_lowercase
-    return list({b[:i] + l + b[i:] for i in range(len(b)+1) for l in letters})
-    
-def gen_tamping(b):
-    letters = string.ascii_lowercase
-    return list({l + b for l in letters} | {b + l for l in letters})
-
+# ================== ALL GENERATORS ==================
+def gen_tamhur(b): return list({b[:i] + l + b[i:] for i in range(len(b)+1) for l in string.ascii_lowercase})
+def gen_tamping(b): return list({l + b for l in string.ascii_lowercase} | {b + l for l in string.ascii_lowercase})
 def gen_switch(b):
     res = set()
     for i in range(len(b) - 1):
-        lst = list(b)
-        lst[i], lst[i+1] = lst[i+1], lst[i]
-        res.add("".join(lst))
+        lst = list(b); lst[i], lst[i+1] = lst[i+1], lst[i]; res.add("".join(lst))
     return list(res)
-
-def gen_uncommon(b):
-    if not b: return []
-    return list({b[:i] + b[i] + b[i:] for i in range(len(b))})
-
-def gen_ganhur(b):
-    letters = string.ascii_lowercase
-    return list({b[:i] + l + b[i+1:] for i in range(len(b)) for l in letters})
-
-def gen_kurhur(b):
-    if len(b) <= 1: return []
-    return list({b[:i] + b[i+1:] for i in range(len(b))})
-
+def gen_uncommon(b): return list({b[:i] + b[i] + b[i:] for i in range(len(b))}) if b else []
+def gen_ganhur(b): return list({b[:i] + l + b[i+1:] for i in range(len(b)) for l in string.ascii_lowercase})
+def gen_kurhur(b): return list({b[:i] + b[i+1:] for i in range(len(b))}) if len(b) > 1 else []
 def gen_canon(b):
-    res = {b + 's'}
-    mapping = {'i': 'l', 'l': 'i'}
+    res = {b + 's'}; mapping = {'i': 'l', 'l': 'i'}
     for i, char in enumerate(b):
-        if char in mapping:
-            res.add(b[:i] + mapping[char] + b[i+1:])
+        if char in mapping: res.add(b[:i] + mapping[char] + b[i+1:])
     return list(res)
 
 rata, tdk_rata, vokal = "asweruiozxcvnm", "qtypdfghjklb", "aeiou"
-
 def gen_rata(b): return list({b[:i] + l + b[i:] for i in range(len(b)+1) for l in rata})
 def gen_tidakrata(b): return list({b[:i] + l + b[i:] for i in range(len(b)+1) for l in tdk_rata})
 def gen_vokal(b): return list({b[:i] + l + b[i:] for i in range(len(b)+1) for l in vokal})
@@ -86,8 +67,9 @@ def gen_cadel(b): return list({b[:i] + l + b[i:] for i in range(len(b)+1) for l 
 # ================== CORE LOGIC ==================
 async def init_clients():
     if not API_ID or not API_HASH: return
-    await asyncio.sleep(10)
+    await asyncio.sleep(5)
     for s in SESSIONS:
+        # Pengecekan file session
         if os.path.exists(f"{s}.session"):
             try:
                 c = TelegramClient(s, int(API_ID), API_HASH)
@@ -95,11 +77,16 @@ async def init_clients():
                 if await c.is_user_authorized():
                     clients.append(c)
                     client_cooldown[c] = 0
-                    logger.info(f"✅ {s} Konek!")
+                    logger.info(f"✅ {s} Ready!")
+                else:
+                    logger.warning(f"⚠️ {s} Not Authorized!")
             except Exception as e: logger.error(f"❌ {s}: {e}")
+        else:
+            logger.info(f"ℹ️ {s}.session not found, skipping.")
 
 def get_available_client():
     global client_index
+    if not clients: return None
     now = time.time()
     available = [c for c in clients if client_cooldown[c] <= now]
     if not available: return None
@@ -107,53 +94,42 @@ def get_available_client():
     client_index += 1
     return client
 
-async def send_log(context: ContextTypes.DEFAULT_TYPE, message: str):
+async def send_log(context, message):
     if not ADMIN_ID: return
-    try:
-        await context.bot.send_message(chat_id=int(ADMIN_ID), text=message, parse_mode='HTML')
-    except Exception as e:
-        logger.error(f"Gagal kirim log: {e}")
+    try: await context.bot.send_message(chat_id=int(ADMIN_ID), text=message, parse_mode='HTML')
+    except: pass
 
-async def check_usernames_fast(usernames):
+async def check_usernames_fast(usernames, context):
     sem = asyncio.Semaphore(5)
     async def worker(u):
         async with sem:
-            for _ in range(2):
-                cl = get_available_client()
-                if not cl: await asyncio.sleep(1); continue
-                try:
-                    ok = await cl(functions.account.CheckUsernameRequest(u))
-                    return f"🟢 @{u}" if ok else None
-                except FloodWaitError as e:
-                    client_cooldown[cl] = time.time() + e.seconds
-                    continue
-                except: return None
-            return None
-    res = await asyncio.gather(*(worker(u) for u in usernames))
-    return [r for r in res if r]
+            cl = get_available_client()
+            if not cl: return None
+            try:
+                ok = await cl(functions.account.CheckUsernameRequest(u))
+                return f"🟢 @{u}" if ok else None
+            except FloodWaitError as e:
+                client_cooldown[cl] = time.time() + e.seconds
+                await send_log(context, f"⚠️ <b>LIMIT!</b> {cl.session.filename} FloodWait {e.seconds}s")
+                return None
+            except: return None
+    return [r for r in await asyncio.gather(*(worker(u) for u in usernames)) if r]
 
 # ================== HANDLERS ==================
 def auth(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user = update.effective_user
-        if not user or user.id not in AUTHORIZED_USERS:
-            await update.message.reply_text("/login dulu.")
+        if not update.effective_user or update.effective_user.id not in AUTHORIZED_USERS:
+            await update.message.reply_text("❌ /login [pw] dulu.")
             return
-        # Kirim log aktivitas ke ADMIN_ID
-        cmd = update.message.text.split()[0] if update.message.text else "Unknown"
-        await send_log(context, f"👤 <b>ACTIVITY:</b> {user.first_name}\n<b>CMD:</b> <code>{cmd}</code>")
         return await func(update, context)
     return wrapper
 
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
     if context.args and context.args[0] == PASSWORD:
-        AUTHORIZED_USERS.add(user.id)
-        await update.message.reply_text("Slmt")
-        await send_log(context, f"🔓 <b>LOGIN SUCCESS:</b> {user.first_name} (@{user.username})")
-    else:
-        await update.message.reply_text("Salah")
-        await send_log(context, f"⚠️ <b>FAILED LOGIN:</b> {user.first_name}")
+        AUTHORIZED_USERS.add(update.effective_user.id)
+        await update.message.reply_text("✅ Slmt.")
+        await send_log(context, f"🔓 <b>LOGIN:</b> {update.effective_user.first_name}")
+    else: await update.message.reply_text("❌ Salah.")
 
 @auth
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -165,55 +141,57 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /monitor [user] - mantau usn\n"
         "• /unmonitor \n\n"
         "<b>Scanning:</b>\n"
-        "• /scanswitch \n"
-        "• /scankurhur \n"
-        "• /scanganhur \n\n"
-        "<b>Scanning:</b>\n"
+        "• /scanswitch, /scankurhur, /scanganhur \n"
         "• /scancadel - 'wycl'\n"
-        "• /scancanon - Tambah 's' / ubah i-l\n\n"
+        "• /scancanon - 's' / i-l\n"
         "• /scanuncommon - sop\n"
-        "• /scantamhur \n"
-        "• /scanrata - tamhur rata\n"
-        "• /scantidakrata - tamhur gak rata\n"
-        "• /scanvokal - tamhur vokal\n\n"
+        "• /scantamhur, /scanrata, /scantidakrata, /scanvokal\n\n"
         "<b>Scanning Tamping:</b>\n"
-        "• /scantamping \n"
-        "• /scantampingrata \n"
-        "• /scantampingtidakrata \n\n"
+        "• /scantamping, /scantampingrata, /scantampingtidakrata \n\n"
         "<b>Scanning Tamdal:</b>\n"
-        "• /scantamdal \n"
-        "• /scantamdalrata \n"
-        "• /scantamdaltidakrata \n\n"
+        "• /scantamdal, /scantamdalrata, /scantamdaltidakrata \n\n"
         "<i>Note: keep sama monitor jangan sering dipake</i>"
     )
     await update.message.reply_text(text, parse_mode='HTML')
-
-@auth
-async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args: return
-    base = context.args[0].replace("@", "")
-    await update.message.reply_text(f"🔍 Scanning @{base}...")
-    res = await check_usernames_fast(gen_tamhur(base)[:100])
-    txt = "<b>✅ AVAILABLE:</b>\n\n" + "\n".join(res) if res else "<b>❌ TIDAK ADA.</b>"
-    await update.message.reply_text(txt, parse_mode='HTML')
 
 @auth
 async def keep(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args: return
     u = context.args[0].replace("@", "")
     uid = update.effective_user.id
+    if uid in running_tasks: return await update.message.reply_text("⚠️ Task aktif.")
+
     async def worker():
         while True:
             cl = get_available_client()
-            if cl:
-                try:
-                    if await cl(functions.account.CheckUsernameRequest(u)):
-                        res = await cl(functions.channels.CreateChannelRequest(title=f"{u}", about="@slateid", megagroup=False))
-                        await cl(functions.channels.UpdateUsernameRequest(channel=res.chats[0], username=u))
-                        await update.message.reply_text(f"🏆 SUCCESS KEEP @{u}")
-                        break
-                except: pass
-            await asyncio.sleep(1)
+            if not cl: await asyncio.sleep(5); continue
+            try:
+                if await cl(functions.account.CheckUsernameRequest(u)):
+                    res = await cl(functions.channels.CreateChannelRequest(title=f"{u}", about="@slateid"))
+                    await cl(functions.channels.UpdateUsernameRequest(channel=res.chats[0], username=u))
+                    
+                    me = await cl.get_me()
+                    owner_name = f"{me.first_name or ''} {me.last_name or ''}".strip()
+                    owner_user = f"@{me.username}" if me.username else "No Usn"
+                    
+                    success_msg = (
+                        f"🏆 <b>SUCCESS KEEP @{u}</b>\n"
+                        f"👤 <b>Owner:</b> <code>{owner_name}</code>\n"
+                        f"🆔 <b>Account:</b> {owner_user}\n"
+                        f"📂 <b>Session:</b> <code>{cl.session.filename}</code>"
+                    )
+                    await update.message.reply_text(success_msg, parse_mode='HTML')
+                    await send_log(context, success_msg)
+                    break
+            except FloodWaitError as e:
+                client_cooldown[cl] = time.time() + e.seconds
+                await send_log(context, f"⚠️ <b>LIMIT KEEP!</b> {cl.session.filename} {e.seconds}s")
+            except (UsernameInvalidError, ChannelsAdminPublicFreeError) as e:
+                await update.message.reply_text(f"🛑 Gagal: {str(e)}"); break
+            except: pass
+            await asyncio.sleep(2)
+        if uid in running_tasks: del running_tasks[uid]
+
     running_tasks[uid] = asyncio.create_task(worker())
     await update.message.reply_text(f"🚀 Hunting @{u}...")
 
@@ -221,9 +199,8 @@ async def keep(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid in running_tasks:
-        running_tasks[uid].cancel()
-        del running_tasks[uid]
-        await update.message.reply_text("🛑 Stop.")
+        running_tasks[uid].cancel(); del running_tasks[uid]
+        await update.message.reply_text("🛑 Keep Stop.")
 
 @auth
 async def monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -247,19 +224,17 @@ async def monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def unmonitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid in monitor_tasks:
-        monitor_tasks[uid].cancel()
-        del monitor_tasks[uid]
-        await update.message.reply_text("🛑 Monitor off.")
+        monitor_tasks[uid].cancel(); del monitor_tasks[uid]
+        await update.message.reply_text("🛑 Monitor Off.")
 
 def create_scan_handler(gen, lbl):
     @auth
     async def h(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if not c.args: return
         base = c.args[0].replace("@", "")
-        await u.message.reply_text(f"Scanning {lbl} @{base}...")
-        res = await check_usernames_fast(gen(base)[:100])
-        txt = "\n".join(res) if res else "Kosong."
-        await u.message.reply_text(txt)
+        m = await u.message.reply_text(f"Scanning {lbl} @{base}...")
+        res = await check_usernames_fast(gen(base)[:100], c)
+        await m.edit_text("\n".join(res) if res else "❌ Kosong.")
     return h
 
 # ================== RUNNER ==================
@@ -269,7 +244,6 @@ async def main():
     
     app.add_handler(CommandHandler("login", login))
     app.add_handler(CommandHandler("info", info))
-    app.add_handler(CommandHandler("check", check))
     app.add_handler(CommandHandler("keep", keep))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("monitor", monitor))
@@ -284,16 +258,13 @@ async def main():
         ("scantampingrata", gen_tampingrata, "Tamping Rata"), ("scantampingtidakrata", gen_tampingtidakrata, "Tamping Tdk Rata"),
         ("scantamdal", gen_tamdal, "Tamdal"), ("scantamdalrata", gen_tamdalrata, "Tamdal Rata"),
         ("scantamdaltidakrata", gen_tamdaltidakrata, "Tamdal Tdk Rata"), ("scancadel", gen_cadel, "Cadel"),
+        ("check", gen_tamhur, "Check"),
     ]
     for cmd, gen, lbl in scans:
         app.add_handler(CommandHandler(cmd, create_scan_handler(gen, lbl)))
 
-    logger.info("🚀 BOT LIVE")
     await app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     nest_asyncio.apply()
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try: loop.run_until_complete(main())
-    except: pass
+    asyncio.run(main())
