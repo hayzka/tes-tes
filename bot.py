@@ -26,7 +26,7 @@ client_index = 0
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-PASSWORD = os.getenv("PASSWORD", "sunny")
+PASSWORD = os.getenv("PASSWORD", "nephis")
 # Ambil ADMIN_ID (Bisa -100xxx untuk grup atau angka biasa untuk user)
 RAW_ADMIN_ID = os.getenv("ADMIN_ID") 
 
@@ -222,36 +222,59 @@ def create_scan(gen, lbl):
     return h
 
 # ================== RUNNER ==================
+# ================== RUNNER (STABLE VERSION) ==================
 async def main():
-    await init_clients()
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("login", login))
-    app.add_handler(CommandHandler("broadcast", broadcast))
-    app.add_handler(CommandHandler("info", info))
-    app.add_handler(CommandHandler("keep", keep))
-    app.add_handler(CommandHandler("stop", stop))
+    try:
+        # Hubungkan ke akun Telegram (Telethon)
+        await init_clients()
+        
+        # Inisialisasi Bot (python-telegram-bot)
+        app = ApplicationBuilder().token(BOT_TOKEN).build()
+        
+        # Tambahkan Handlers
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("login", login))
+        app.add_handler(CommandHandler("broadcast", broadcast))
+        app.add_handler(CommandHandler("info", info))
+        app.add_handler(CommandHandler("keep", keep))
+        app.add_handler(CommandHandler("stop", stop))
 
-    scans = [
-        ("scantamping", gen_tamping, "Tamping"), ("scanswitch", gen_switch, "Switch"),
-        ("scantamhur", gen_tamhur, "Tamhur"), ("scanganhur", gen_ganhur, "Ganhur"),
-        ("scanuncommon", gen_uncommon, "Uncommon"), ("scankurhur", gen_kurhur, "Kurhur"),
-        ("scancadel", gen_cadel, "Cadel"), ("scancanon", gen_canon, "Canon"),
-        ("scanrata", gen_rata, "Rata"), ("scantidakrata", gen_tidakrata, "Tdk Rata"),
-        ("scanvokal", gen_vokal, "Vokal"), ("scantampingrata", gen_tampingrata, "Tamping Rata"),
-        ("scantampingtidakrata", gen_tampingtidakrata, "Tamping Tdk Rata"), ("scantamdal", gen_tamdal, "Tamdal"),
-        ("scantamdalrata", gen_tamdalrata, "Tamdal Rata"), ("scantamdaltidakrata", gen_tamdaltidakrata, "Tamdal Tdk Rata"),
-        ("check", gen_tamhur, "Check"),
-    ]
-    for cmd, gen, lbl in scans:
-        app.add_handler(CommandHandler(cmd, create_scan(gen, lbl)))
+        scans = [
+            ("scantamping", gen_tamping, "Tamping"), ("scanswitch", gen_switch, "Switch"),
+            ("scantamhur", gen_tamhur, "Tamhur"), ("scanganhur", gen_ganhur, "Ganhur"),
+            ("scanuncommon", gen_uncommon, "Uncommon"), ("scankurhur", gen_kurhur, "Kurhur"),
+            ("scancadel", gen_cadel, "Cadel"), ("scancanon", gen_canon, "Canon"),
+            ("scanrata", gen_rata, "Rata"), ("scantidakrata", gen_tidakrata, "Tdk Rata"),
+            ("scanvokal", gen_vokal, "Vokal"), ("scantampingrata", gen_tampingrata, "Tamping Rata"),
+            ("scantampingtidakrata", gen_tampingtidakrata, "Tamping Tdk Rata"), ("scantamdal", gen_tamdal, "Tamdal"),
+            ("scantamdalrata", gen_tamdalrata, "Tamdal Rata"), ("scantamdaltidakrata", gen_tamdaltidakrata, "Tamdal Tdk Rata"),
+            ("check", gen_tamhur, "Check"),
+        ]
+        for cmd, gen, lbl in scans:
+            app.add_handler(CommandHandler(cmd, create_scan(gen, lbl)))
 
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_msg))
-    
-    logger.info("🤖 Bot is running...")
-    await app.run_polling(drop_pending_updates=True)
+        # Handler untuk pesan biasa (harus di paling bawah)
+        app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_msg))
+        
+        logger.info("🤖 Bot is starting polling...")
+        
+        # Gunakan run_polling secara standar
+        await app.initialize()
+        await app.start()
+        await app.updater.start_polling(drop_pending_updates=True)
+        
+        # Menjaga agar bot tetap hidup
+        while True:
+            await asyncio.sleep(3600)
+            
+    except Exception as e:
+        logger.error(f"💥 Fatal Error: {e}")
 
 if __name__ == "__main__":
+    import nest_asyncio
     nest_asyncio.apply()
-    asyncio.run(main())
+    
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot stopped.")
