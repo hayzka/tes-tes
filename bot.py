@@ -112,12 +112,65 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     seen_users.add(update.effective_user.id)
     await update.message.reply_text(f"Halo {update.effective_user.first_name}! Silakan kirim pesan.")
 
+# Simpan ID pesan otomatis biar bisa dihapus nanti
+# Format: {user_id: message_id}
+pending_replies = {}
+seen_users = set()
+
 async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    user_name = update.effective_user.first_name
+    username = f"@{update.effective_user.username}" if update.effective_user.username else "No Usn"
+    text = update.message.text
+    
     seen_users.add(user_id)
-    if user_id not in AUTHORIZED_USERS:
-        await update.message.reply_text("Pesan diterima! Admin akan segera membalas.")
+    
+    # --- 1. ADMIN MEMBALAS (REPLY) ---
+    if user_id in AUTHORIZED_USERS and update.message.reply_to_message:
+        reply_text = update.message.reply_to_message.text
+        if "🆔 ID:" in reply_text:
+            try:
+                target_id = int(reply_text.split("🆔 ID:")[1].split("\n")[0].strip())
+                
+                # KIRIM PESAN KE USER
+                await context.bot.send_message(
+                    chat_id=target_id, 
+                    text=f"💬 <b>Pesan dari Admin:</b>\n\n{text}", 
+                    parse_mode='HTML'
+                )
+                
+                # HAPUS PESAN "PESAN DITERIMA" DI SISI USER (Jika ada)
+                if target_id in pending_replies:
+                    try:
+                        await context.bot.delete_message(
+                            chat_id=target_id, 
+                            message_id=pending_replies[target_id]
+                        )
+                        del pending_replies[target_id] # Hapus dari memori setelah sukses
+                    except: pass 
+                
+                await update.message.reply_text(f"✅ Terkirim & Pesan otomatis dihapus.")
+            except Exception as e:
+                await update.message.reply_text(f"❌ Gagal: {e}")
+            return
 
+    # --- 2. USER BIASA CHAT ---
+    if user_id not in AUTHORIZED_USERS:
+        # Kirim pesan otomatis dan simpan ID-nya
+        sent_msg = await update.message.reply_text("Pesan diterima! Admin akan segera membalas.")
+        pending_replies[user_id] = sent_msg.message_id
+        
+        # Lapor ke Admin
+        if ADMIN_ID:
+            report = (
+                f"📩 <b>PESAN BARU MASUK</b>\n"
+                f"👤 Dari: {user_name} ({username})\n"
+                f"🆔 ID: <code>{user_id}</code>\n\n"
+                f"💬 Isi:\n{text}\n\n"
+                f"ℹ️ <i>Reply pesan ini untuk membalas.</i>"
+            )
+            await context.bot.send_message(chat_id=int(ADMIN_ID), text=report, parse_mode='HTML')
+            
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args and context.args[0] == PASSWORD:
         AUTHORIZED_USERS.add(update.effective_user.id)
