@@ -9,31 +9,22 @@ from telethon.errors import FloodWaitError, UsernameOccupiedError, UsernameInval
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# ================== LOGGING & USER DB ==================
+# ================== LOGGING & MEMORY DB ==================
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-USER_DB = "/data/users.txt" if os.path.exists("/data") else "users.txt"
-
-def save_user(user_id):
-    users = get_all_users()
-    if str(user_id) not in users:
-        with open(USER_DB, "a") as f:
-            f.write(f"{user_id}\n")
-
-def get_all_users():
-    if not os.path.exists(USER_DB): return []
-    with open(USER_DB, "r") as f:
-        return [line.strip() for line in f.readlines()]
+# Simpan user di RAM (Tanpa file agar tidak crash di Railway)
+seen_users = set()
 
 # ================== CONFIG ==================
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-PASSWORD = os.getenv("PASSWORD", "sunless")
+PASSWORD = os.getenv("PASSWORD", "sunny")
 ADMIN_ID = os.getenv("ADMIN_ID") 
 
-SESSION_DIR = "/data/" if os.path.exists("/data") else "./"
+# Cari di folder utama (GitHub)
+SESSION_DIR = "./" 
 SESSIONS = [f"{SESSION_DIR}acc{i}" for i in range(1, 11)]
 
 AUTHORIZED_USERS = set()
@@ -42,7 +33,7 @@ client_cooldown = {}
 running_tasks = {}
 client_index = 0
 
-# ================== GENERATORS (16 TYPES) ==================
+# ================== ALL GENERATORS (16 TYPES) ==================
 def gen_tamhur(b): return list({b[:i] + l + b[i:] for i in range(len(b)+1) for l in string.ascii_lowercase})
 def gen_tamping(b): return list({l + b for l in string.ascii_lowercase} | {b + l for l in string.ascii_lowercase})
 def gen_switch(b):
@@ -74,14 +65,17 @@ async def init_clients():
     if not API_ID or not API_HASH: return
     await asyncio.sleep(5)
     for s in SESSIONS:
-        if os.path.exists(f"{s}.session"):
+        full_path = f"{s}.session"
+        if os.path.exists(full_path):
             try:
                 c = TelegramClient(s, int(API_ID), API_HASH)
                 await c.connect()
                 if await c.is_user_authorized():
                     clients.append(c)
                     client_cooldown[c] = 0
-            except: pass
+                    logger.info(f"✅ {s} Ready!")
+                else: await c.disconnect()
+            except Exception as e: logger.error(f"❌ {s}: {e}")
 
 def get_available_client():
     global client_index
@@ -93,17 +87,15 @@ def get_available_client():
     client_index += 1
     return client
 
-async def check_usernames_fast(usernames, context):
+async def check_usernames_fast(usernames):
     sem = asyncio.Semaphore(5)
     async def worker(u):
         async with sem:
             cl = get_available_client()
             if not cl: return None
             try:
-                if await cl(functions.account.CheckUsernameRequest(u)):
-                    return f"🟢 @{u}"
-            except FloodWaitError as e:
-                client_cooldown[cl] = time.time() + e.seconds
+                if await cl(functions.account.CheckUsernameRequest(u)): return f"🟢 @{u}"
+            except FloodWaitError as e: client_cooldown[cl] = time.time() + e.seconds
             except: pass
             return None
     results = await asyncio.gather(*(worker(u) for u in usernames))
@@ -117,40 +109,39 @@ def auth_only(func):
     return wrapper
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    save_user(update.effective_user.id)
+    seen_users.add(update.effective_user.id)
     await update.message.reply_text(f"Halo {update.effective_user.first_name}! Silakan kirim pesan.")
 
 async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    save_user(user_id)
+    seen_users.add(user_id)
     if user_id not in AUTHORIZED_USERS:
         await update.message.reply_text("Pesan diterima! Admin akan segera membalas.")
 
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args and context.args[0] == PASSWORD:
         AUTHORIZED_USERS.add(update.effective_user.id)
-        await update.message.reply_text("🔓 **Login Berhasil.** Perintah Admin aktif.")
+        await update.message.reply_text("🔓 **Login Berhasil.** Fitur Admin Aktif.")
     else: await update.message.reply_text("❌ Password salah.")
 
 @auth_only
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args: return
     msg = " ".join(context.args)
-    users = get_all_users()
     count = 0
-    for uid in users:
+    for uid in list(seen_users):
         try:
-            await context.bot.send_message(chat_id=int(uid), text=msg)
+            await context.bot.send_message(chat_id=uid, text=msg)
             count += 1
             await asyncio.sleep(0.05)
         except: pass
-    await update.message.reply_text(f"✅ Broadcast ke {count} user selesai.")
+    await update.message.reply_text(f"✅ Broadcast selesai ke {count} user.")
 
 @auth_only
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "<b>🛠 ADMIN PANEL</b>\n\n"
-        "<b>SESSIONS:</b>\n"
+        "<b>CORE:</b>\n"
         "• /login [pw], /broadcast [msg]\n"
         "• /keep [usn], /stop\n\n"
         "<b>SCANS:</b>\n"
@@ -168,7 +159,6 @@ async def keep(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = context.args[0].replace("@", "")
     uid = update.effective_user.id
     if uid in running_tasks: return await update.message.reply_text("⚠️ Task aktif.")
-
     async def worker():
         while True:
             cl = get_available_client()
@@ -185,7 +175,6 @@ async def keep(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except: pass
             await asyncio.sleep(2)
         if uid in running_tasks: del running_tasks[uid]
-
     running_tasks[uid] = asyncio.create_task(worker())
     await update.message.reply_text(f"🚀 Hunting @{u}...")
 
@@ -202,7 +191,7 @@ def create_scan(gen, lbl):
         if not c.args: return
         base = c.args[0].replace("@", "")
         m = await u.message.reply_text(f"🔍 Scan {lbl} @{base}...")
-        res = await check_usernames_fast(gen(base)[:100], c)
+        res = await check_usernames_fast(gen(base)[:100])
         await m.edit_text("<b>AVAILABLE:</b>\n" + "\n".join(res) if res else "❌ Kosong.", parse_mode='HTML')
     return h
 
@@ -210,7 +199,6 @@ def create_scan(gen, lbl):
 async def main():
     await init_clients()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("login", login))
     app.add_handler(CommandHandler("broadcast", broadcast))
