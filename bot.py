@@ -117,7 +117,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 pending_replies = {}
 seen_users = set()
 
+# ================== MESSAGING SYSTEM ==================
+
+# Pastikan ini hanya didefinisikan SATU KALI di atas handle_msg
+pending_replies = {}
+# seen_users sudah ada di bagian LOGGING & MEMORY DB di paling atas, 
+# jadi jangan tulis ulang seen_users = set() di sini.
+
 async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Cek apakah ADMIN_ID ada, jika tidak bot tidak bisa lapor
+    if not ADMIN_ID:
+        logger.error("❌ ADMIN_ID belum di-set di Environment Variables!")
+        return
+
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name
     username = f"@{update.effective_user.username}" if update.effective_user.username else "No Usn"
@@ -126,42 +138,42 @@ async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     seen_users.add(user_id)
     
     # --- 1. ADMIN MEMBALAS (REPLY) ---
+    # Logika: Jika kamu (Admin) reply pesan laporan dari bot
     if user_id in AUTHORIZED_USERS and update.message.reply_to_message:
         reply_text = update.message.reply_to_message.text
         if "🆔 ID:" in reply_text:
             try:
+                # Ambil ID user target dari teks laporan
                 target_id = int(reply_text.split("🆔 ID:")[1].split("\n")[0].strip())
                 
-                # KIRIM PESAN KE USER
+                # Kirim ke user
                 await context.bot.send_message(
                     chat_id=target_id, 
                     text=f"💬 <b>Pesan dari Admin:</b>\n\n{text}", 
                     parse_mode='HTML'
                 )
                 
-                # HAPUS PESAN "PESAN DITERIMA" DI SISI USER (Jika ada)
+                # Hapus pesan "Pesan diterima" di sisi user
                 if target_id in pending_replies:
                     try:
-                        await context.bot.delete_message(
-                            chat_id=target_id, 
-                            message_id=pending_replies[target_id]
-                        )
-                        del pending_replies[target_id] # Hapus dari memori setelah sukses
+                        await context.bot.delete_message(chat_id=target_id, message_id=pending_replies[target_id])
+                        del pending_replies[target_id]
                     except: pass 
                 
-                await update.message.reply_text(f"✅ Terkirim & Pesan otomatis dihapus.")
+                await update.message.reply_text(f"✅ Terkirim ke {target_id} & Auto-reply dihapus.")
             except Exception as e:
-                await update.message.reply_text(f"❌ Gagal: {e}")
+                await update.message.reply_text(f"❌ Gagal membalas: {e}")
             return
 
     # --- 2. USER BIASA CHAT ---
+    # Logika: Jika yang chat bukan Admin yang login
     if user_id not in AUTHORIZED_USERS:
-        # Kirim pesan otomatis dan simpan ID-nya
-        sent_msg = await update.message.reply_text("Pesan diterima! Admin akan segera membalas.")
-        pending_replies[user_id] = sent_msg.message_id
-        
-        # Lapor ke Admin
-        if ADMIN_ID:
+        try:
+            # Kirim auto-reply ke user
+            sent_msg = await update.message.reply_text("Pesan diterima! Admin akan segera membalas.")
+            pending_replies[user_id] = sent_msg.message_id
+            
+            # LAPOR KE KAMU (ADMIN)
             report = (
                 f"📩 <b>PESAN BARU MASUK</b>\n"
                 f"👤 Dari: {user_name} ({username})\n"
@@ -170,6 +182,11 @@ async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"ℹ️ <i>Reply pesan ini untuk membalas.</i>"
             )
             await context.bot.send_message(chat_id=int(ADMIN_ID), text=report, parse_mode='HTML')
+        except Exception as e:
+            logger.error(f"❌ Gagal meneruskan pesan ke Admin: {e}")
+
+# ======================================================
+
             
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args and context.args[0] == PASSWORD:
