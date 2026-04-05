@@ -120,21 +120,66 @@ async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     username = f"@{update.effective_user.username}" if update.effective_user.username else "No Usn"
     text = update.message.text
+    chat_type = update.effective_chat.type
 
-    if update.effective_chat.type in ['group', 'supergroup']:
+    # ========================================================
+    # CASE 1: DI DALAM GRUP (Group / Supergroup)
+    # ========================================================
+    if chat_type in ['group', 'supergroup']:
+        # Cek apakah ini reply ke bot
         is_reply_to_bot = (
             update.message.reply_to_message and 
             update.message.reply_to_message.from_user.id == context.bot.id
         )
-    
-        if not is_reply_to_bot and user_id not in AUTHORIZED_USERS:
-            return 
+        
+        # LOGIC: Di grup, bot HANYA proses kalau itu ADMIN REPLY atau USER REPLY ke bot
+        if user_id in AUTHORIZED_USERS and update.message.reply_to_message:
+            # Ini logic admin bales user (tetap jalan di grup)
+            pass 
+        elif is_reply_to_bot:
+            # Ini kalau user nanya balik/reply bot di grup, bot boleh respon
+            pass
+        else:
+            # SELAIN ITU (Chat biasa), EXIT / JANGAN RESPON
+            return
+
+    # ========================================================
+    # CASE 2: DI PRIVATE CHAT (Chat Langsung ke Bot)
+    # ========================================================
+    # (Otomatis lolos ke sini kalau Case 1 tidak terpenuhi atau Case 1 lolos filter)
     
     seen_users.add(user_id)
 
+    # 1. LOGIC ADMIN REPLY (Membalas pesan user lewat report)
     if user_id in AUTHORIZED_USERS and update.message.reply_to_message:
         reply_text = update.message.reply_to_message.text
-        
+        if "🆔 ID:" in reply_text:
+            try:
+                target_id = int(reply_text.split("🆔 ID:")[1].split("\n")[0].strip())
+                await context.bot.send_message(chat_id=target_id, text=f"{text}", parse_mode='HTML')
+                if target_id in pending_replies:
+                    try:
+                        await context.bot.delete_message(chat_id=target_id, message_id=pending_replies[target_id])
+                        del pending_replies[target_id]
+                    except: pass
+                await update.message.reply_text(f"✅ Terkirim ke {target_id}")
+            except Exception as e:
+                await update.message.reply_text(f"❌ Gagal: {e}")
+            return
+
+    # 2. LOGIC USER BIASA (Chat ke bot untuk tanya-tanya)
+    # Filter: Hanya respon kalau di PRIVATE CHAT
+    if user_id not in AUTHORIZED_USERS and chat_type == 'private':
+        sent_msg = await update.message.reply_text("Pesan diterima! Admin akan segera membalas.")
+        pending_replies[user_id] = sent_msg.message_id
+        if RAW_ADMIN_ID:
+            try:
+                clean_admin_id = int(str(RAW_ADMIN_ID).strip())
+                report = (f"📩 <b>PESAN BARU</b>\n👤 Dari: {user_name} ({username})\n🆔 ID: <code>{user_id}</code>\n\n💬 Isi:\n{text}\n\nℹ️ <i>Reply pesan ini untuk membalas.</i>")
+                await context.bot.send_message(chat_id=clean_admin_id, text=report, parse_mode='HTML')
+            except Exception as e:
+                logger.error(f"Gagal lapor: {e}")
+    
         
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args and context.args[0] == PASSWORD:
