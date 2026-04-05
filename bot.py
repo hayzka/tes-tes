@@ -13,27 +13,27 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Con
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Simpan user di RAM (Tanpa file agar tidak crash di Railway)
+# SEMUA VARIABLE RAM DI SINI
 seen_users = set()
-
-# ================== CONFIG ==================
-API_ID = os.getenv("API_ID")
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-PASSWORD = os.getenv("PASSWORD", "sunny")
-ADMIN_ID = os.getenv("ADMIN_ID") 
-
-# Cari di folder utama (GitHub)
-SESSION_DIR = "./" 
-SESSIONS = [f"{SESSION_DIR}acc{i}" for i in range(1, 11)]
-
+pending_replies = {}
 AUTHORIZED_USERS = set()
 clients = []
 client_cooldown = {}
 running_tasks = {}
 client_index = 0
 
-# ================== ALL GENERATORS (16 TYPES) ==================
+# ================== CONFIG ==================
+API_ID = os.getenv("API_ID")
+API_HASH = os.getenv("API_HASH")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+PASSWORD = os.getenv("PASSWORD", "sunny")
+# Ambil ADMIN_ID (Bisa -100xxx untuk grup atau angka biasa untuk user)
+RAW_ADMIN_ID = os.getenv("ADMIN_ID") 
+
+SESSION_DIR = "./" 
+SESSIONS = [f"{SESSION_DIR}acc{i}" for i in range(1, 11)]
+
+# ================== GENERATORS ==================
 def gen_tamhur(b): return list({b[:i] + l + b[i:] for i in range(len(b)+1) for l in string.ascii_lowercase})
 def gen_tamping(b): return list({l + b for l in string.ascii_lowercase} | {b + l for l in string.ascii_lowercase})
 def gen_switch(b):
@@ -110,88 +110,50 @@ def auth_only(func):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     seen_users.add(update.effective_user.id)
-    await update.message.reply_text(f"Halo {update.effective_user.first_name}! Silakan kirim pesan.")
-
-# Simpan ID pesan otomatis biar bisa dihapus nanti
-# Format: {user_id: message_id}
-pending_replies = {}
-seen_users = set()
-
-# ================== MESSAGING SYSTEM ==================
-
-# Pastikan ini hanya didefinisikan SATU KALI di atas handle_msg
-pending_replies = {}
-# seen_users sudah ada di bagian LOGGING & MEMORY DB di paling atas, 
-# jadi jangan tulis ulang seen_users = set() di sini.
+    await update.message.reply_text(f"Halo {update.effective_user.first_name}! Silakan kirim pesan atau /login.")
 
 async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Cek apakah ADMIN_ID ada, jika tidak bot tidak bisa lapor
-    if not ADMIN_ID:
-        logger.error("❌ ADMIN_ID belum di-set di Environment Variables!")
-        return
-
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name
     username = f"@{update.effective_user.username}" if update.effective_user.username else "No Usn"
     text = update.message.text
-    
     seen_users.add(user_id)
-    
-    # --- 1. ADMIN MEMBALAS (REPLY) ---
-    # Logika: Jika kamu (Admin) reply pesan laporan dari bot
+
+    # 1. ADMIN REPLY (MEMBALAS USER)
     if user_id in AUTHORIZED_USERS and update.message.reply_to_message:
         reply_text = update.message.reply_to_message.text
         if "🆔 ID:" in reply_text:
             try:
-                # Ambil ID user target dari teks laporan
                 target_id = int(reply_text.split("🆔 ID:")[1].split("\n")[0].strip())
-                
-                # Kirim ke user
-                await context.bot.send_message(
-                    chat_id=target_id, 
-                    text=f"💬 <b>Pesan dari Admin:</b>\n\n{text}", 
-                    parse_mode='HTML'
-                )
-                
-                # Hapus pesan "Pesan diterima" di sisi user
+                await context.bot.send_message(chat_id=target_id, text=f"💬 <b>Pesan dari Admin:</b>\n\n{text}", parse_mode='HTML')
                 if target_id in pending_replies:
                     try:
                         await context.bot.delete_message(chat_id=target_id, message_id=pending_replies[target_id])
                         del pending_replies[target_id]
-                    except: pass 
-                
-                await update.message.reply_text(f"✅ Terkirim ke {target_id} & Auto-reply dihapus.")
+                    except: pass
+                await update.message.reply_text(f"✅ Terkirim ke {target_id}")
             except Exception as e:
-                await update.message.reply_text(f"❌ Gagal membalas: {e}")
+                await update.message.reply_text(f"❌ Gagal: {e}")
             return
 
-    # --- 2. USER BIASA CHAT ---
-    # Logika: Jika yang chat bukan Admin yang login
+    # 2. USER BIASA CHAT
     if user_id not in AUTHORIZED_USERS:
-        try:
-            # Kirim auto-reply ke user
-            sent_msg = await update.message.reply_text("Pesan diterima! Admin akan segera membalas.")
-            pending_replies[user_id] = sent_msg.message_id
-            
-            # LAPOR KE KAMU (ADMIN)
-            report = (
-                f"📩 <b>PESAN BARU MASUK</b>\n"
-                f"👤 Dari: {user_name} ({username})\n"
-                f"🆔 ID: <code>{user_id}</code>\n\n"
-                f"💬 Isi:\n{text}\n\n"
-                f"ℹ️ <i>Reply pesan ini untuk membalas.</i>"
-            )
-            await context.bot.send_message(chat_id=int(ADMIN_ID), text=report, parse_mode='HTML')
-        except Exception as e:
-            logger.error(f"❌ Gagal meneruskan pesan ke Admin: {e}")
+        # Kirim auto-reply ke user
+        sent_msg = await update.message.reply_text("Pesan diterima! Admin akan segera membalas.")
+        pending_replies[user_id] = sent_msg.message_id
+        
+        # LAPOR KE ADMIN (GROUP/USER)
+        if RAW_ADMIN_ID:
+            try:
+                report = (f"📩 <b>PESAN BARU</b>\n👤 Dari: {user_name} ({username})\n🆔 ID: <code>{user_id}</code>\n\n💬 Isi:\n{text}\n\nℹ️ <i>Reply pesan ini untuk membalas.</i>")
+                await context.bot.send_message(chat_id=int(RAW_ADMIN_ID), text=report, parse_mode='HTML')
+            except Exception as e:
+                logger.error(f"Gagal lapor ke Admin: {e}")
 
-# ======================================================
-
-            
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args and context.args[0] == PASSWORD:
         AUTHORIZED_USERS.add(update.effective_user.id)
-        await update.message.reply_text("🔓 **Login Berhasil.** Fitur Admin Aktif.")
+        await update.message.reply_text("🔓 **Login Berhasil.**")
     else: await update.message.reply_text("❌ Password salah.")
 
 @auth_only
@@ -211,15 +173,9 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "<b>🛠 ADMIN PANEL</b>\n\n"
-        "<b>CORE:</b>\n"
-        "• /login [pw], /broadcast [msg]\n"
-        "• /keep [usn], /stop\n\n"
-        "<b>SCANS:</b>\n"
-        "• /check, /scanswitch, /scankurhur, /scanganhur\n"
-        "• /scancadel, /scancanon, /scanuncommon, /scantamhur\n"
-        "• /scanrata, /scantidakrata, /scanvokal, /scantamping\n"
-        "• /scantampingrata, /scantampingtidakrata\n"
-        "• /scantamdal, /scantamdalrata, /scantamdaltidakrata"
+        "• /broadcast [pesan]\n"
+        "• /keep [usn], /stop\n"
+        "• /check, /scantamping, dll (16 Scans)"
     )
     await update.message.reply_text(text, parse_mode='HTML')
 
@@ -229,13 +185,14 @@ async def keep(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = context.args[0].replace("@", "")
     uid = update.effective_user.id
     if uid in running_tasks: return await update.message.reply_text("⚠️ Task aktif.")
+    
     async def worker():
         while True:
             cl = get_available_client()
             if not cl: await asyncio.sleep(10); continue
             try:
                 if await cl(functions.account.CheckUsernameRequest(u)):
-                    res = await cl(functions.channels.CreateChannelRequest(title=f"{u}", about="@slateid"))
+                    res = await cl(functions.channels.CreateChannelRequest(title=f"Keep {u}", about="@slateid"))
                     await cl(functions.channels.UpdateUsernameRequest(channel=res.chats[0], username=u))
                     me = await cl.get_me()
                     await update.message.reply_text(f"🏆 <b>SUCCESS KEEP @{u}</b>\n👤 <b>Owner:</b> {me.first_name}", parse_mode='HTML')
@@ -245,6 +202,7 @@ async def keep(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except: pass
             await asyncio.sleep(2)
         if uid in running_tasks: del running_tasks[uid]
+        
     running_tasks[uid] = asyncio.create_task(worker())
     await update.message.reply_text(f"🚀 Hunting @{u}...")
 
@@ -269,6 +227,7 @@ def create_scan(gen, lbl):
 async def main():
     await init_clients()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("login", login))
     app.add_handler(CommandHandler("broadcast", broadcast))
@@ -280,17 +239,19 @@ async def main():
         ("scantamping", gen_tamping, "Tamping"), ("scanswitch", gen_switch, "Switch"),
         ("scantamhur", gen_tamhur, "Tamhur"), ("scanganhur", gen_ganhur, "Ganhur"),
         ("scanuncommon", gen_uncommon, "Uncommon"), ("scankurhur", gen_kurhur, "Kurhur"),
-        ("scancanon", gen_canon, "Canon"), ("scanrata", gen_rata, "Rata"),
-        ("scantidakrata", gen_tidakrata, "Tdk Rata"), ("scanvokal", gen_vokal, "Vokal"),
-        ("scantampingrata", gen_tampingrata, "Tamping Rata"), ("scantampingtidakrata", gen_tampingtidakrata, "Tamping Tdk Rata"),
-        ("scantamdal", gen_tamdal, "Tamdal"), ("scantamdalrata", gen_tamdalrata, "Tamdal Rata"),
-        ("scantamdaltidakrata", gen_tamdaltidakrata, "Tamdal Tdk Rata"), ("scancadel", gen_cadel, "Cadel"),
+        ("scancadel", gen_cadel, "Cadel"), ("scancanon", gen_canon, "Canon"),
+        ("scanrata", gen_rata, "Rata"), ("scantidakrata", gen_tidakrata, "Tdk Rata"),
+        ("scanvokal", gen_vokal, "Vokal"), ("scantampingrata", gen_tampingrata, "Tamping Rata"),
+        ("scantampingtidakrata", gen_tampingtidakrata, "Tamping Tdk Rata"), ("scantamdal", gen_tamdal, "Tamdal"),
+        ("scantamdalrata", gen_tamdalrata, "Tamdal Rata"), ("scantamdaltidakrata", gen_tamdaltidakrata, "Tamdal Tdk Rata"),
         ("check", gen_tamhur, "Check"),
     ]
     for cmd, gen, lbl in scans:
         app.add_handler(CommandHandler(cmd, create_scan(gen, lbl)))
 
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_msg))
+    
+    logger.info("🤖 Bot is running...")
     await app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
