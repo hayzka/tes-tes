@@ -193,7 +193,7 @@ async def keep(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not cl: await asyncio.sleep(10); continue
             try:
                 if await cl(functions.account.CheckUsernameRequest(u)):
-                    res = await cl(functions.channels.CreateChannelRequest(title=f"Keep {u}", about="@slateid"))
+                    res = await cl(functions.channels.CreateChannelRequest(title=f".", about="@slateid"))
                     await cl(functions.channels.UpdateUsernameRequest(channel=res.chats[0], username=u))
                     me = await cl.get_me()
                     await update.message.reply_text(f"🏆 <b>SUCCESS KEEP @{u}</b>\n👤 <b>Owner:</b> {me.first_name}", parse_mode='HTML')
