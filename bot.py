@@ -148,12 +148,17 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(text, parse_mode='HTML')
 
+# GANTI BAGIAN IMPORT LAMA DENGAN INI
+from telethon.errors import FloodWaitError, UsernameOccupiedError, UsernameInvalidError, RPCError
+
+# ... (kode lainnya tetap sama)
+
 @auth
 async def keep(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args: return
     u = context.args[0].replace("@", "")
     uid = update.effective_user.id
-    if uid in running_tasks: return await update.message.reply_text("⚠️ Task masih jalan.")
+    if uid in running_tasks: return await update.message.reply_text("⚠️ Task aktif.")
 
     async def worker():
         while True:
@@ -162,8 +167,11 @@ async def keep(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await asyncio.sleep(10)
                 continue
             try:
+                # Cek ketersediaan
                 if await cl(functions.account.CheckUsernameRequest(u)):
+                    # Buat Channel
                     res = await cl(functions.channels.CreateChannelRequest(title=f"{u}", about="@slateid"))
+                    # Pasang Username
                     await cl(functions.channels.UpdateUsernameRequest(channel=res.chats[0], username=u))
                     
                     me = await cl.get_me()
@@ -177,16 +185,25 @@ async def keep(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     break
             except FloodWaitError as e:
                 client_cooldown[cl] = time.time() + e.seconds
-            except (UsernameInvalidError, ChannelsAdminPublicFreeError) as e:
-                await update.message.reply_text(f"🛑 Error: {e}")
+                await send_log(context, f"⚠️ <b>LIMIT!</b> {cl.session.filename} {e.seconds}s")
+            except (UsernameInvalidError, UsernameOccupiedError):
+                await update.message.reply_text(f"🛑 @{u} tidak bisa diambil (Invalid/Taken).")
                 break
-            except Exception:
-                pass
+            except RPCError as e:
+                # Menangani error umum lainnya tanpa bikin crash
+                if "CHANNELS_ADMIN_PUBLIC_TOO_MUCH" in str(e):
+                    await update.message.reply_text("🛑 Akun ini sudah limit buat channel publik.")
+                else:
+                    logger.error(f"RPC Error: {e}")
+                break
+            except Exception as e:
+                logger.error(f"General Error: {e}")
+                break
             await asyncio.sleep(2)
         if uid in running_tasks: del running_tasks[uid]
 
     running_tasks[uid] = asyncio.create_task(worker())
-    await update.message.reply_text(f"🚀 Memulai autokeep @{u}...")
+    await update.message.reply_text(f"🚀 Hunting @{u}...")
 
 @auth
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
