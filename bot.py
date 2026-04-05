@@ -33,7 +33,7 @@ RAW_ADMIN_ID = os.getenv("ADMIN_ID")
 SESSION_DIR = "./" 
 SESSIONS = [f"{SESSION_DIR}acc{i}" for i in range(1, 11)]
 
-# ================== GENERATORS ==================
+# ================== GENERATORS (16 TYPES) ==================
 def gen_tamhur(b): return list({b[:i] + l + b[i:] for i in range(len(b)+1) for l in string.ascii_lowercase})
 def gen_tamping(b): return list({l + b for l in string.ascii_lowercase} | {b + l for l in string.ascii_lowercase})
 def gen_switch(b):
@@ -138,17 +138,15 @@ async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 2. USER BIASA CHAT
     if user_id not in AUTHORIZED_USERS:
-        # Kirim auto-reply ke user
         sent_msg = await update.message.reply_text("Pesan diterima! Admin akan segera membalas.")
         pending_replies[user_id] = sent_msg.message_id
-        
-        # LAPOR KE ADMIN (GROUP/USER)
         if RAW_ADMIN_ID:
             try:
+                clean_admin_id = int(str(RAW_ADMIN_ID).strip())
                 report = (f"📩 <b>PESAN BARU</b>\n👤 Dari: {user_name} ({username})\n🆔 ID: <code>{user_id}</code>\n\n💬 Isi:\n{text}\n\nℹ️ <i>Reply pesan ini untuk membalas.</i>")
-                await context.bot.send_message(chat_id=int(RAW_ADMIN_ID), text=report, parse_mode='HTML')
+                await context.bot.send_message(chat_id=clean_admin_id, text=report, parse_mode='HTML')
             except Exception as e:
-                logger.error(f"Gagal lapor ke Admin: {e}")
+                logger.error(f"Gagal lapor: {e}")
 
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args and context.args[0] == PASSWORD:
