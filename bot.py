@@ -3,9 +3,8 @@ import os
 import string
 import time
 import logging
-import random
 import nest_asyncio
-from telethon import TelegramClient, functions, types
+from telethon import TelegramClient, functions
 from telethon.errors import FloodWaitError, ChannelsAdminPublicFreeError, UsernameOccupiedError, UsernameInvalidError
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -21,22 +20,17 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 PASSWORD = os.getenv("PASSWORD", "hi")
 ADMIN_ID = os.getenv("ADMIN_ID") 
 
-# Cek apakah jalan di Railway (folder /data) atau lokal/github (root)
-if os.path.exists("/data"):
-    SESSION_DIR = "/data/"
-else:
-    SESSION_DIR = "./"
-
+# Sesuaikan dengan lokasi file di GitHub kamu
+SESSION_DIR = "./" 
 SESSIONS = [f"{SESSION_DIR}acc{i}" for i in range(1, 11)]
 
 AUTHORIZED_USERS = set()
 clients = []
 client_cooldown = {}
 running_tasks = {}
-monitor_tasks = {}
 client_index = 0
 
-# ================== ALL GENERATORS ==================
+# ================== GENERATORS (LENGKAP) ==================
 def gen_tamhur(b): return list({b[:i] + l + b[i:] for i in range(len(b)+1) for l in string.ascii_lowercase})
 def gen_tamping(b): return list({l + b for l in string.ascii_lowercase} | {b + l for l in string.ascii_lowercase})
 def gen_switch(b):
@@ -66,29 +60,34 @@ def gen_cadel(b): return list({b[:i] + l + b[i:] for i in range(len(b)+1) for l 
 
 # ================== CORE LOGIC ==================
 async def init_clients():
-    if not API_ID or not API_HASH: return
-    await asyncio.sleep(5)
+    if not API_ID or not API_HASH:
+        logger.error("❌ API_ID/API_HASH missing!")
+        return
+    
     for s in SESSIONS:
-        # Pengecekan file session
-        if os.path.exists(f"{s}.session"):
+        full_path = f"{s}.session"
+        if os.path.exists(full_path):
             try:
+                # Use readonly=True if Railway keeps crashing on write
                 c = TelegramClient(s, int(API_ID), API_HASH)
                 await c.connect()
                 if await c.is_user_authorized():
                     clients.append(c)
                     client_cooldown[c] = 0
-                    logger.info(f"✅ {s} Ready!")
+                    logger.info(f"✅ {s} Connected!")
                 else:
-                    logger.warning(f"⚠️ {s} Not Authorized!")
-            except Exception as e: logger.error(f"❌ {s}: {e}")
+                    logger.warning(f"⚠️ {s} unauthorized. Delete and re-login!")
+                    await c.disconnect()
+            except Exception as e:
+                logger.error(f"❌ Error loading {s}: {e}")
         else:
-            logger.info(f"ℹ️ {s}.session not found, skipping.")
+            logger.info(f"ℹ️ {full_path} not found.")
 
 def get_available_client():
     global client_index
     if not clients: return None
     now = time.time()
-    available = [c for c in clients if client_cooldown[c] <= now]
+    available = [c for c in clients if client_cooldown.get(c, 0) <= now]
     if not available: return None
     client = available[client_index % len(available)]
     client_index += 1
@@ -113,7 +112,9 @@ async def check_usernames_fast(usernames, context):
                 await send_log(context, f"⚠️ <b>LIMIT!</b> {cl.session.filename} FloodWait {e.seconds}s")
                 return None
             except: return None
-    return [r for r in await asyncio.gather(*(worker(u) for u in usernames)) if r]
+    tasks = [worker(u) for u in usernames]
+    results = await asyncio.gather(*tasks)
+    return [r for r in results if r]
 
 # ================== HANDLERS ==================
 def auth(func):
@@ -127,30 +128,23 @@ def auth(func):
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args and context.args[0] == PASSWORD:
         AUTHORIZED_USERS.add(update.effective_user.id)
-        await update.message.reply_text("✅ Slmt.")
-        await send_log(context, f"🔓 <b>LOGIN:</b> {update.effective_user.first_name}")
-    else: await update.message.reply_text("❌ Salah.")
+        await update.message.reply_text("✅ Login Berhasil.")
+    else:
+        await update.message.reply_text("❌ Password salah.")
 
 @auth
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "<b>Commands:</b>\n"
         "• /login [password]\n"
-        "• /keep [user] - buat autokeep\n"
-        "• /stop - hentiin autokeep\n"
-        "• /monitor [user] - mantau usn\n"
-        "• /unmonitor \n\n"
-        "<b>Scanning:</b>\n"
-        "• /scanswitch, /scankurhur, /scanganhur \n"
-        "• /scancadel - 'wycl'\n"
-        "• /scancanon - 's' / i-l\n"
-        "• /scanuncommon - sop\n"
-        "• /scantamhur, /scanrata, /scantidakrata, /scanvokal\n\n"
-        "<b>Scanning Tamping:</b>\n"
-        "• /scantamping, /scantampingrata, /scantampingtidakrata \n\n"
-        "<b>Scanning Tamdal:</b>\n"
-        "• /scantamdal, /scantamdalrata, /scantamdaltidakrata \n\n"
-        "<i>Note: keep sama monitor jangan sering dipake</i>"
+        "• /keep [user]\n"
+        "• /stop\n\n"
+        "<b>Generator Scans:</b>\n"
+        "• /scanswitch, /scankurhur, /scanganhur, /scancadel\n"
+        "• /scancanon, /scanuncommon, /scantamhur, /scanrata\n"
+        "• /scantidakrata, /scanvokal, /scantamping\n"
+        "• /scantampingrata, /scantampingtidakrata\n"
+        "• /scantamdal, /scantamdalrata, /scantamdaltidakrata\n"
     )
     await update.message.reply_text(text, parse_mode='HTML')
 
@@ -159,82 +153,57 @@ async def keep(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args: return
     u = context.args[0].replace("@", "")
     uid = update.effective_user.id
-    if uid in running_tasks: return await update.message.reply_text("⚠️ Task aktif.")
+    if uid in running_tasks: return await update.message.reply_text("⚠️ Task masih jalan.")
 
     async def worker():
         while True:
             cl = get_available_client()
-            if not cl: await asyncio.sleep(5); continue
+            if not cl: 
+                await asyncio.sleep(10)
+                continue
             try:
                 if await cl(functions.account.CheckUsernameRequest(u)):
                     res = await cl(functions.channels.CreateChannelRequest(title=f"{u}", about="@slateid"))
                     await cl(functions.channels.UpdateUsernameRequest(channel=res.chats[0], username=u))
                     
                     me = await cl.get_me()
-                    owner_name = f"{me.first_name or ''} {me.last_name or ''}".strip()
-                    owner_user = f"@{me.username}" if me.username else "No Usn"
-                    
                     success_msg = (
                         f"🏆 <b>SUCCESS KEEP @{u}</b>\n"
-                        f"👤 <b>Owner:</b> <code>{owner_name}</code>\n"
-                        f"🆔 <b>Account:</b> {owner_user}\n"
-                        f"📂 <b>Session:</b> <code>{cl.session.filename}</code>"
+                        f"👤 <b>Owner:</b> <code>{me.first_name}</code>\n"
+                        f"🆔 <b>Account:</b> @{me.username or 'NoUsn'}\n"
                     )
                     await update.message.reply_text(success_msg, parse_mode='HTML')
                     await send_log(context, success_msg)
                     break
             except FloodWaitError as e:
                 client_cooldown[cl] = time.time() + e.seconds
-                await send_log(context, f"⚠️ <b>LIMIT KEEP!</b> {cl.session.filename} {e.seconds}s")
             except (UsernameInvalidError, ChannelsAdminPublicFreeError) as e:
-                await update.message.reply_text(f"🛑 Gagal: {str(e)}"); break
-            except: pass
+                await update.message.reply_text(f"🛑 Error: {e}")
+                break
+            except Exception:
+                pass
             await asyncio.sleep(2)
         if uid in running_tasks: del running_tasks[uid]
 
     running_tasks[uid] = asyncio.create_task(worker())
-    await update.message.reply_text(f"🚀 Hunting @{u}...")
+    await update.message.reply_text(f"🚀 Memulai autokeep @{u}...")
 
 @auth
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid in running_tasks:
-        running_tasks[uid].cancel(); del running_tasks[uid]
-        await update.message.reply_text("🛑 Keep Stop.")
+        running_tasks[uid].cancel()
+        del running_tasks[uid]
+        await update.message.reply_text("🛑 Autokeep dihentikan.")
 
-@auth
-async def monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args: return
-    u = context.args[0].replace("@", "")
-    uid = update.effective_user.id
-    async def m_worker():
-        while True:
-            cl = get_available_client()
-            if cl:
-                try:
-                    if await cl(functions.account.CheckUsernameRequest(u)):
-                        await update.message.reply_text(f"🔔 @{u} AVAILABLE!")
-                        break
-                except: pass
-            await asyncio.sleep(60)
-    monitor_tasks[uid] = asyncio.create_task(m_worker())
-    await update.message.reply_text(f"👀 Monitoring @{u}...")
-
-@auth
-async def unmonitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if uid in monitor_tasks:
-        monitor_tasks[uid].cancel(); del monitor_tasks[uid]
-        await update.message.reply_text("🛑 Monitor Off.")
-
-def create_scan_handler(gen, lbl):
+def create_handler(gen, lbl):
     @auth
     async def h(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if not c.args: return
         base = c.args[0].replace("@", "")
-        m = await u.message.reply_text(f"Scanning {lbl} @{base}...")
+        msg = await u.message.reply_text(f"🔍 Scan {lbl} @{base}...")
         res = await check_usernames_fast(gen(base)[:100], c)
-        await m.edit_text("\n".join(res) if res else "❌ Kosong.")
+        await msg.edit_text("\n".join(res) if res else "❌ Tidak ada yang tersedia.")
     return h
 
 # ================== RUNNER ==================
@@ -246,25 +215,26 @@ async def main():
     app.add_handler(CommandHandler("info", info))
     app.add_handler(CommandHandler("keep", keep))
     app.add_handler(CommandHandler("stop", stop))
-    app.add_handler(CommandHandler("monitor", monitor))
-    app.add_handler(CommandHandler("unmonitor", unmonitor))
 
     scans = [
         ("scantamping", gen_tamping, "Tamping"), ("scanswitch", gen_switch, "Switch"),
         ("scantamhur", gen_tamhur, "Tamhur"), ("scanganhur", gen_ganhur, "Ganhur"),
         ("scanuncommon", gen_uncommon, "Uncommon"), ("scankurhur", gen_kurhur, "Kurhur"),
         ("scancanon", gen_canon, "Canon"), ("scanrata", gen_rata, "Rata"),
-        ("scantidakrata", gen_tidakrata, "Tidak Rata"), ("scanvokal", gen_vokal, "Vokal"),
+        ("scantidakrata", gen_tidakrata, "Tdk Rata"), ("scanvokal", gen_vokal, "Vokal"),
         ("scantampingrata", gen_tampingrata, "Tamping Rata"), ("scantampingtidakrata", gen_tampingtidakrata, "Tamping Tdk Rata"),
         ("scantamdal", gen_tamdal, "Tamdal"), ("scantamdalrata", gen_tamdalrata, "Tamdal Rata"),
         ("scantamdaltidakrata", gen_tamdaltidakrata, "Tamdal Tdk Rata"), ("scancadel", gen_cadel, "Cadel"),
         ("check", gen_tamhur, "Check"),
     ]
     for cmd, gen, lbl in scans:
-        app.add_handler(CommandHandler(cmd, create_scan_handler(gen, lbl)))
+        app.add_handler(CommandHandler(cmd, create_handler(gen, lbl)))
 
     await app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     nest_asyncio.apply()
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
