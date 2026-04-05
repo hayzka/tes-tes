@@ -128,7 +128,7 @@ async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if "🆔 ID:" in reply_text:
             try:
                 target_id = int(reply_text.split("🆔 ID:")[1].split("\n")[0].strip())
-                await context.bot.send_message(chat_id=target_id, text=f"💬 <b>Pesan dari Admin:</b>\n\n{text}", parse_mode='HTML')
+                await context.bot.send_message(chat_id=target_id, text=f"{text}", parse_mode='HTML')
                 if target_id in pending_replies:
                     try:
                         await context.bot.delete_message(chat_id=target_id, message_id=pending_replies[target_id])
