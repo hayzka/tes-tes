@@ -120,27 +120,22 @@ async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     username = f"@{update.effective_user.username}" if update.effective_user.username else "No Usn"
     text = update.message.text
-    
-    # --- TAMBAHKAN FILTER DI SINI ---
-    # Cek apakah ini di Grup atau Supergroup
+
     if update.effective_chat.type in ['group', 'supergroup']:
-        # 1. Jika ini reply, cek apakah me-reply pesan si bot
         is_reply_to_bot = (
             update.message.reply_to_message and 
             update.message.reply_to_message.from_user.id == context.bot.id
         )
-        
-        # 2. Jika bukan reply ke bot DAN user tersebut bukan ADMIN_ID (lo)
-        # Maka bot diam (return)
+    
         if not is_reply_to_bot and user_id not in AUTHORIZED_USERS:
             return 
-    # ---------------------------------
-
+    
     seen_users.add(user_id)
 
-    # 1. ADMIN REPLY (MEMBALAS USER)
     if user_id in AUTHORIZED_USERS and update.message.reply_to_message:
-
+        reply_text = update.message.reply_to_message.text
+        
+        
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args and context.args[0] == PASSWORD:
         AUTHORIZED_USERS.add(update.effective_user.id)
