@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-PASSWORD = os.getenv("PASSWORD", "hi")
+PASSWORD = os.getenv("PASSWORD", "sunny")
 ADMIN_ID = os.getenv("ADMIN_ID") 
 
 SESSION_DIR = "./" 
