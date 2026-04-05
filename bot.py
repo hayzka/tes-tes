@@ -1,3 +1,6 @@
+import nest_asyncio
+nest_asyncio.apply() # Pindahkan ke sini, sebelum import telethon/telegram
+
 import asyncio
 import os
 import string
