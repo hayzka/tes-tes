@@ -122,20 +122,21 @@ def auth(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
         uid = user.id
-        
         if uid in BANNED_USERS: return
-            
+        
         if uid not in AUTHORIZED_USERS and uid != ADMIN_ID:
+            # Tetap lapor ke admin meski user belum login tapi nyoba command
+            if update.effective_chat.type == "private" and uid != ADMIN_ID:
+                log_msg = f"🔒 **UNAUTHORIZED COMMAND**\nFrom: {user.first_name} ({uid})\nAction: `{update.message.text}`"
+                await context.bot.send_message(ADMIN_ID, log_msg)
             await update.message.reply_text("🔒 /login <pass> dulu.")
             return
         
-        # LOG SEMUA COMMAND (Aktivitas user terpantau di sini)
+        # LOG SEMUA COMMAND (Scan, Info, dll)
         if uid != ADMIN_ID:
-            cmd = update.message.text
-            log_msg = f"⚡ **ACTIVITY LOG**\nUser: {user.first_name} ({uid})\nAction: `{cmd}`"
-            try:
-                await context.bot.send_message(ADMIN_ID, log_msg)
-            except: pass
+            chat_type = "Grup" if update.effective_chat.type != "private" else "Private"
+            log_msg = f"⚡ **ACTIVITY LOG ({chat_type})**\nUser: {user.first_name} ({uid})\nAction: `{update.message.text}`"
+            await context.bot.send_message(ADMIN_ID, log_msg)
             
         return await func(update, context)
     return wrapper
@@ -144,31 +145,38 @@ async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     uid = user.id
     text = update.message.text
+    chat_type = update.effective_chat.type
     bot_obj = await context.bot.get_me()
 
-    # 1. JIKA ADMIN REPLY LOG (Kirim pesan balik ke User)
+    # 1. JIKA ADMIN REPLY LOG (Balas balik ke User)
     if uid == ADMIN_ID and update.message.reply_to_message:
         try:
             import re
             target_text = update.message.reply_to_message.text or update.message.reply_to_message.caption
             match = re.search(r'\((\d+)\)', target_text)
-            
             if match:
                 target_id = int(match.group(1))
                 await context.bot.send_message(target_id, f"💬 **Pesan dari Admin:**\n{text}")
                 await update.message.reply_text("✅ Terkirim.")
             else:
-                await update.message.reply_text("❌ ID tidak ditemukan di pesan log.")
+                await update.message.reply_text("❌ ID tidak ditemukan di log.")
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {e}")
         return
 
-    # 2. JIKA USER REPLY BOT (Teruskan ke Admin)
-    if uid != ADMIN_ID and update.message.reply_to_message:
-        if update.message.reply_to_message.from_user.id == bot_obj.id:
-            log_msg = f"💬 **USER REPLY BOT**\nFrom: {user.first_name} ({uid})\nMsg: {text}"
+    # 2. JIKA DI PRIVATE CHAT (Kirim semua chat ke Admin)
+    if chat_type == "private" and uid != ADMIN_ID:
+        log_msg = f"💬 **PRIVATE CHAT LOG**\nFrom: {user.first_name} ({uid})\nMsg: {text}"
+        await context.bot.send_message(ADMIN_ID, log_msg)
+        return
+
+    # 3. JIKA DI GRUP (Hanya jika reply BOT)
+    if chat_type != "private" and uid != ADMIN_ID:
+        if update.message.reply_to_message and update.message.reply_to_message.from_user.id == bot_obj.id:
+            log_msg = f"👥 **GROUP REPLY LOG**\nFrom: {user.first_name} ({uid})\nGroup: {update.effective_chat.title}\nMsg: {text}"
             await context.bot.send_message(ADMIN_ID, log_msg)
 
+    
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "Commands:\n"
