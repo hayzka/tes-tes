@@ -6,12 +6,13 @@ import os
 import string
 import time
 import logging
+import re
 from telethon import TelegramClient, functions
 from telethon.errors import FloodWaitError, RPCError
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# ================== CONFIG ==================
+# ================== CONFIG & LOGGING ==================
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -115,27 +116,24 @@ async def check_usernames_fast(usernames):
     results = await asyncio.gather(*(worker(u) for u in usernames))
     return [r for r in results if r]
 
-# ================== HANDLERS ==================
 # ================== MONITORING & AUTH ==================
-
 def auth(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
         uid = user.id
         if uid in BANNED_USERS: return
         
+        # Logika Notif jika belum login tapi pakai Command
         if uid not in AUTHORIZED_USERS and uid != ADMIN_ID:
-            # Tetap lapor ke admin meski user belum login tapi nyoba command
-            if update.effective_chat.type == "private" and uid != ADMIN_ID:
-                log_msg = f"🔒 **UNAUTHORIZED COMMAND**\nFrom: {user.first_name} ({uid})\nAction: `{update.message.text}`"
-                await context.bot.send_message(ADMIN_ID, log_msg)
-            await update.message.reply_text("🔒 /login <pass> dulu.")
+            log_msg = f"🔒 UNAUTHORIZED COMMAND\nUser: {user.first_name} ({uid})\nAction: `{update.message.text}`"
+            await context.bot.send_message(ADMIN_ID, log_msg)
+            await update.message.reply_text("/login pake pw dulu.")
             return
         
-        # LOG SEMUA COMMAND (Scan, Info, dll)
+        # LOG SEMUA COMMAND (Aktivitas User Terpantau)
         if uid != ADMIN_ID:
-            chat_type = "Grup" if update.effective_chat.type != "private" else "Private"
-            log_msg = f"⚡ **ACTIVITY LOG ({chat_type})**\nUser: {user.first_name} ({uid})\nAction: `{update.message.text}`"
+            loc = "Grup" if update.effective_chat.type != "private" else "Private"
+            log_msg = f"⚡ ACTIVITY LOG ({loc})\nUser: {user.first_name} ({uid})\nAction: `{update.message.text}`"
             await context.bot.send_message(ADMIN_ID, log_msg)
             
         return await func(update, context)
@@ -148,35 +146,39 @@ async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = update.effective_chat.type
     bot_obj = await context.bot.get_me()
 
-    # 1. JIKA ADMIN REPLY LOG (Balas balik ke User)
+    # 1. JIKA ADMIN REPLY NOTIF (Fitur Balas Universal)
     if uid == ADMIN_ID and update.message.reply_to_message:
         try:
-            import re
             target_text = update.message.reply_to_message.text or update.message.reply_to_message.caption
             match = re.search(r'\((\d+)\)', target_text)
             if match:
                 target_id = int(match.group(1))
-                await context.bot.send_message(target_id, f"💬 **Pesan dari Admin:**\n{text}")
-                await update.message.reply_text("✅ Terkirim.")
+                await context.bot.send_message(target_id, f"{text}")
+                await update.message.reply_text(f"✅ Terkirim ke `{target_id}`")
             else:
-                await update.message.reply_text("❌ ID tidak ditemukan di log.")
+                await update.message.reply_text("❌ ID user tidak ditemukan di log ini.")
         except Exception as e:
-            await update.message.reply_text(f"❌ Error: {e}")
+            await update.message.reply_text(f"❌ Error balas: {e}")
         return
 
-    # 2. JIKA DI PRIVATE CHAT (Kirim semua chat ke Admin)
+    # 2. DI PRIVATE CHAT (Kirim semua chat ke Admin)
     if chat_type == "private" and uid != ADMIN_ID:
-        log_msg = f"💬 **PRIVATE CHAT LOG**\nFrom: {user.first_name} ({uid})\nMsg: {text}"
+        log_msg = f"💬 **PRIVATE CHAT**\nFrom: {user.first_name} ({uid})\nMsg: {text}"
         await context.bot.send_message(ADMIN_ID, log_msg)
         return
 
-    # 3. JIKA DI GRUP (Hanya jika reply BOT)
+    # 3. DI GRUP (Hanya jika reply BOT)
     if chat_type != "private" and uid != ADMIN_ID:
         if update.message.reply_to_message and update.message.reply_to_message.from_user.id == bot_obj.id:
-            log_msg = f"👥 **GROUP REPLY LOG**\nFrom: {user.first_name} ({uid})\nGroup: {update.effective_chat.title}\nMsg: {text}"
+            log_msg = (
+                f"👥 GROUP REPLY\n"
+                f"From: {user.first_name} ({uid})\n"
+                f"Group: {update.effective_chat.title}\n"
+                f"Msg: {text}"
+            )
             await context.bot.send_message(ADMIN_ID, log_msg)
 
-    
+# ================== COMMAND HANDLERS ==================
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "Commands:\n"
@@ -214,53 +216,52 @@ async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args and context.args[0] == PASSWORD:
         AUTHORIZED_USERS.add(user.id)
         await update.message.reply_text("✅ Sukses Login.")
-        await context.bot.send_message(ADMIN_ID, f"🔔 LOGIN ALERT\nName: {user.first_name}\nID: `{user.id}`")
-    else: await update.message.reply_text("Salah pw nya.")
+        await context.bot.send_message(ADMIN_ID, f"🔔 LOGIN SUCCESS\nName: {user.first_name} ({user.id})")
+    else: await update.message.reply_text("❌ Password salah.")
 
 @auth
 async def keep(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+    user = update.effective_user
     if not context.args: return
-    u = context.args[0].replace("@", "")
-    if uid in running_tasks: return await update.message.reply_text("⚠️ Task sudah jalan.")
+    target = context.args[0].replace("@", "")
+    if uid in running_tasks: return await update.message.reply_text("⚠️ Task sedang jalan.")
 
     async def worker():
         while True:
             cl = get_available_client()
             if not cl: await asyncio.sleep(2); continue
             try:
-                if await cl(functions.account.CheckUsernameRequest(u)):
-                    res = await cl(functions.channels.CreateChannelRequest(title=f".", about=""))
-                    await cl(functions.channels.UpdateUsernameRequest(channel=res.chats[0], username=u))
-                    await update.message.reply_text(f"🏆 SUCCESS KEEP @{u}")
+                if await cl(functions.account.CheckUsernameRequest(target)):
+                    res = await cl(functions.channels.CreateChannelRequest(title=".", about=""))
+                    await cl(functions.channels.UpdateUsernameRequest(channel=res.chats[0], username=target))
+                    await update.message.reply_text(f"🎯 DAPET: @{target}")
+                    await context.bot.send_message(ADMIN_ID, f"🎯 SUCCESS KEEP\nTarget: @{target}\nBy: {user.first_name} ({user.id})")
                     break
             except FloodWaitError as e: client_cooldown[cl] = time.time() + e.seconds
-            except RPCError: break
-            except: pass
+            except: break
             await asyncio.sleep(1)
         if uid in running_tasks: del running_tasks[uid]
         
     running_tasks[uid] = asyncio.create_task(worker())
-    await update.message.reply_text(f"🚀 Hunting @{u}...")
+    await update.message.reply_text(f"🚀 Hunting @{target}...")
 
 @auth
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid in running_tasks:
         running_tasks[uid].cancel(); del running_tasks[uid]
-        await update.message.reply_text("🛑 Hunter Stop.")
-    else: await update.message.reply_text("Gak ada task jalan.")
+        await update.message.reply_text("🛑 Hunter dihentikan.")
+    else: await update.message.reply_text("Gak ada task aktif.")
 
 def create_scan(gen, lbl):
     @auth
     async def h(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if not c.args: return
         base = c.args[0].replace("@", "")
-        m = await u.message.reply_text(f"🔍 Scan {lbl} @{base}...")
+        m = await u.message.reply_text(f"🔍 Scanning {lbl} @{base}...")
         raw_res = gen(base)
-        # Gabung dengan canon jika scanuncommon
         if lbl == "Uncommon": raw_res += gen_canon(base)
-        
         res = await check_usernames_fast(list(set(raw_res))[:100])
         await m.edit_text("<b>AVAILABLE:</b>\n" + "\n".join(res) if res else "❌ Tidak ada yang tersedia.", parse_mode='HTML')
     return h
@@ -268,70 +269,56 @@ def create_scan(gen, lbl):
 async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     try:
-        target = int(context.args[0])
-        save_ban(target)
-        if target in running_tasks: 
-            running_tasks[target].cancel(); del running_tasks[target]
-        await update.message.reply_text(f"🚫 User {target} Banned.")
+        tid = int(context.args[0]); save_ban(tid)
+        if tid in running_tasks: running_tasks[tid].cancel(); del running_tasks[tid]
+        await update.message.reply_text(f"🚫 User {tid} Banned.")
     except: pass
 
 async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     try:
-        target = int(context.args[0])
-        if target in BANNED_USERS:
-            BANNED_USERS.remove(target)
-            # Hapus juga dari file agar permanen
-            if os.path.exists(BAN_FILE):
-                with open(BAN_FILE, "r") as f:
-                    lines = f.readlines()
-                with open(BAN_FILE, "w") as f:
-                    for line in lines:
-                        if line.strip() != str(target):
-                            f.write(line)
-            await update.message.reply_text(f"✅ User `{target}` telah di-unban.")
-        else:
-            await update.message.reply_text("User tidak ada di daftar ban.")
-    except:
-        await update.message.reply_text("Gunakan: /unban <user_id>")
+        tid = int(context.args[0])
+        if tid in BANNED_USERS: BANNED_USERS.remove(tid)
+        await update.message.reply_text(f"✅ User {tid} Unbanned.")
+    except: pass
 
-# ================== MAIN ==================
+# ================== MAIN RUNNER ==================
 async def main():
     load_bans()
     await init_clients()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
-
     app.add_handler(CommandHandler("login", login))
     app.add_handler(CommandHandler("info", info))
     app.add_handler(CommandHandler("keep", keep))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("ban", ban))
     app.add_handler(CommandHandler("unban", unban))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_msg))
 
+    # Registrasi Scan Commands secara Otomatis
     scans = [
         ("scantamping", gen_tamping, "Tamping"), ("scanswitch", gen_switch, "Switch"),
         ("scantamhur", gen_tamhur, "Tamhur"), ("scanganhur", gen_ganhur, "Ganhur"),
         ("scanuncommon", gen_uncommon, "Uncommon"), ("scankurhur", gen_kurhur, "Kurhur"),
-        ("scancadel", gen_cadel, "Cadel"), ("scanuncommon", gen_canon, "Uncommon"),
-        ("scanrata", gen_rata, "Rata"), ("scantidakrata", gen_tidakrata, "Tdk Rata"),
-        ("scanvokal", gen_vokal, "Vokal"), ("scantampingrata", gen_tampingrata, "Tamping Rata"),
-        ("scantampingtidakrata", gen_tampingtidakrata, "Tamping Tdk Rata"), ("scantamdal", gen_tamdal, "Tamdal"),
-        ("scantamdalrata", gen_tamdalrata, "Tamdal Rata"), ("scantamdaltidakrata", gen_tamdaltidakrata, "Tamdal Tdk Rata")
+        ("scancadel", gen_cadel, "Cadel"), ("scanuncommon", gen_canon, "Uncommon"), ("scanrata", gen_rata, "Rata"), 
+        ("scantidakrata", gen_tidakrata, "Tdk Rata"), ("scanvokal", gen_vokal, "Vokal"), 
+        ("scantampingrata", gen_tampingrata, "Tamping Rata"), ("scantampingtidakrata", gen_tampingtidakrata, "Tamping Tdk Rata"), 
+        ("scantamdal", gen_tamdal, "Tamdal"), ("scantamdalrata", gen_tamdalrata, "Tamdal Rata"), 
+        ("scantamdaltidakrata", gen_tamdaltidakrata, "Tamdal Tdk Rata")
     ]
     for cmd, gen, lbl in scans:
         app.add_handler(CommandHandler(cmd, create_scan(gen, lbl)))
+
+    # Chat & Reply Monitoring Handler
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_msg))
 
     async with app:
         await app.initialize()
         await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
-        logger.info("🚀 ONLINE")
+        logger.info("🚀 BOT IS ONLINE")
         while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except:
-        pass
+    try: asyncio.run(main())
+    except: pass
