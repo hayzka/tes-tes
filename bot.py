@@ -306,26 +306,51 @@ async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: pass
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    
-    if not context.args:
-        await update.message.reply_text("Gunakan: /bc <pesan>")
+    # Hanya Admin yang bisa broadcast
+    if update.effective_user.id != ADMIN_ID:
         return
 
-    pesan = " ".join(context.args)
+    if not context.args:
+        await update.message.reply_text("❌ Format salah! Gunakan: `/bc <pesan>`")
+        return
+
+    pesan_bc = " ".join(context.args)
+    
+    # Ambil daftar user unik dari set ALL_USERS
+    targets = list(ALL_USERS)
+    total = len(targets)
+    
+    if total == 0:
+        await update.message.reply_text("❌ Belum ada user yang terdaftar di database.")
+        return
+
+    progress_msg = await update.message.reply_text(f"📢 Memulai broadcast ke {total} user...")
+    
     sukses = 0
     gagal = 0
-    
-    msg = await update.message.reply_text(f"📢 Memulai broadcast ke {len(ALL_USERS)} user...")
 
-    for user_id in list(ALL_USERS):
+    for user_id in targets:
         try:
-            await context.bot.send_message(user_id, f"{pesan}")
+            # Kirim pesan broadcast
+            await context.bot.send_message(
+                chat_id=user_id, 
+                text=f"{pesan_bc}",
+                parse_mode='Markdown'
+            )
             sukses += 1
+            # Jeda 0.05 detik agar tidak terkena Flood Limit Telegram
             await asyncio.sleep(0.05) 
+        except Exception as e:
+            logger.error(f"Gagal kirim ke {user_id}: {e}")
             gagal += 1
     
-    await msg.edit_text(f"✅ Broadcast Selesai!\n\n🚀 Berhasil: {sukses}\n❌ Gagal: {gagal}")
+    # Laporan Akhir (Potongan kode yang kamu kirim)
+    await progress_msg.edit_text(
+        f"✅ Broadcast Selesai!\n\n"
+        f"🚀 Berhasil: {sukses}\n"
+        f"❌ Gagal: {gagal}\n"
+        f"📊 Total Target: {total}"
+    )
 
 # ================== MAIN RUNNER ==================
 async def main():
