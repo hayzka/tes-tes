@@ -241,6 +241,7 @@ async def main():
     app.add_handler(CommandHandler("keep", keep))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("ban", ban))
+    app.add_handler(CommandHandler("info", info))
 
     async with app:
         await app.initialize()
