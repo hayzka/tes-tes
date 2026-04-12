@@ -379,12 +379,13 @@ async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
     app.add_handler(CommandHandler("login", login))
+    app.add_handler(CommandHandler("bc", broadcast))
     app.add_handler(CommandHandler("info", info))
     app.add_handler(CommandHandler("keep", keep))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("ban", ban))
     app.add_handler(CommandHandler("unban", unban))
-    app.add_handler(CommandHandler("bc", broadcast))
+    
 
     # Registrasi Scan Commands secara Otomatis
     scans = [
