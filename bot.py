@@ -129,6 +129,37 @@ def auth(func):
         return await func(update, context)
     return wrapper
 
+async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "Commands:\n"
+        "• /login [password]\n"
+        "• /keep [user] - buat autokeep\n"
+        "• /stop - hentiin autokeep\n"
+        "• /info \n\n"
+        "Scanning:\n"
+        "• /scanswitch \n"
+        "• /scankurhur \n"
+        "• /scancadel - 'wycl'\n\n"
+        "Scanning:\n"
+        "• /scanrata - tamhur rata\n"
+        "• /scantidakrata - tamhur gak rata\n"
+        "• /scanvokal - tamhur vokal\n"
+        "• /scanuncommon - sop, scannon, cannon\n"
+        "• /scantamhur\n"
+        "• /scanganhur\n"
+        "• /scanswitch \n\n"
+        "Scanning Tamping:\n"
+        "• /scantamping \n"
+        "• /scantampingrata \n"
+        "• /scantampingtidakrata \n\n"
+        "Scanning Tamdal:\n"
+        "• /scantamdal \n"
+        "• /scantamdalrata \n"
+        "• /scantamdaltidakrata \n\n"
+        "Noted: keep jangan sering dipake"
+    )
+    await update.message.reply_text(help_text)
+
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id in BANNED_USERS: return
