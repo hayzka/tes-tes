@@ -377,9 +377,9 @@ async def main():
     load_users()
     await init_clients()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    
-    app.add_handler(CommandHandler("login", login))
+
     app.add_handler(CommandHandler("bc", broadcast))
+    app.add_handler(CommandHandler("login", login))
     app.add_handler(CommandHandler("info", info))
     app.add_handler(CommandHandler("keep", keep))
     app.add_handler(CommandHandler("stop", stop))
