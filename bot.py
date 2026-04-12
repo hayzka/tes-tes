@@ -155,41 +155,48 @@ def auth(func):
     return wrapper
 
 async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     uid = user.id
     text = update.message.text
     chat_type = update.effective_chat.type
     bot_obj = await context.bot.get_me()
 
-    # --- 1. PRIORITAS UTAMA: ADMIN REPLY ---
-    # Jika KAMU (Admin) me-reply pesan log di dalam chat bot
+    # Simpan user ke database broadcast (Opsional)
+    if 'save_user' in globals():
+        save_user(uid)
+
+    # ================== 1. FIREWALL ADMIN REPLY ==================
+    # JIKA KAMU (ADMIN) ME-REPLY SESUATU DI CHAT BOT
     if uid == ADMIN_ID and update.message.reply_to_message:
         try:
             import re
-            # Cari ID di dalam kurung ( )
-            target_text = update.message.reply_to_message.text or update.message.reply_to_message.caption
-            match = re.search(r'\((\d+)\)', target_text)
+            # Ambil teks dari pesan yang kamu reply (bisa teks atau caption foto)
+            target_msg = update.message.reply_to_message.text or update.message.reply_to_message.caption
             
-            if match:
-                target_id = int(match.group(1))
-                # Kirim ke user target
-                await context.bot.send_message(target_id, f"{text}")
-                await update.message.reply_text(f"✅ Balasan terkirim ke `{target_id}`")
-                return  # BERHENTI DI SINI, jangan lanjut ke logika bawah
-            else:
-                await update.message.reply_text("❌ Gagal: Tidak ada ID user di pesan yang kamu reply.")
-                return
+            if target_msg:
+                # Cari ID di dalam kurung (...)
+                match = re.search(r'\((\d+)\)', target_msg)
+                
+                if match:
+                    target_id = int(match.group(1))
+                    # Kirim pesanmu ke user tersebut
+                    await context.bot.send_message(target_id, f"{text}")
+                    await update.message.reply_text(f"✅ Terkirim ke `{target_id}`")
+                    return # <--- SANGAT PENTING: Berhenti di sini agar tidak mental balik!
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {e}")
             return
 
-    # --- 2. LOGIKA UNTUK USER BIASA (Bukan Admin) ---
+    # ================== 2. LOGIKA USER BIASA ==================
+    # Jika Admin cuma chat biasa (tanpa reply), atau user lain yang chat
     if uid != ADMIN_ID:
-        # Jika di Private Chat (Kirim semua ke Admin)
+        # Jika di Private Chat bot
         if chat_type == "private":
             log_msg = f"💬 PRIVATE CHAT\nFrom: {user.first_name} ({uid})\nMsg: {text}"
             await context.bot.send_message(ADMIN_ID, log_msg)
-        
+            return
+
         # Jika di Grup (Hanya jika reply bot)
         elif update.message.reply_to_message and update.message.reply_to_message.from_user.id == bot_obj.id:
             log_msg = (
@@ -199,6 +206,7 @@ async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Msg: {text}"
             )
             await context.bot.send_message(ADMIN_ID, log_msg)
+            return
 
 # ================== COMMAND HANDLERS ==================
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
