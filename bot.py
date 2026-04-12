@@ -33,6 +33,21 @@ running_tasks = {}
 client_index = 0
 
 # ================== PERSISTENCE ==================
+USER_FILE = f"{DATA_DIR}users.txt"
+ALL_USERS = set()
+
+def load_users():
+    if os.path.exists(USER_FILE):
+        with open(USER_FILE, "r") as f:
+            for line in f:
+                if line.strip(): ALL_USERS.add(int(line.strip()))
+
+def save_user(user_id):
+    if user_id not in ALL_USERS:
+        ALL_USERS.add(user_id)
+        with open(USER_FILE, "a") as f:
+            f.write(f"{user_id}\n")
+
 def load_bans():
     if os.path.exists(BAN_FILE):
         with open(BAN_FILE, "r") as f:
@@ -146,30 +161,37 @@ async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = update.effective_chat.type
     bot_obj = await context.bot.get_me()
 
-    # 1. JIKA ADMIN REPLY NOTIF (Fitur Balas Universal)
+    # --- 1. PRIORITAS UTAMA: ADMIN REPLY ---
+    # Jika KAMU (Admin) me-reply pesan log di dalam chat bot
     if uid == ADMIN_ID and update.message.reply_to_message:
         try:
+            import re
+            # Cari ID di dalam kurung ( )
             target_text = update.message.reply_to_message.text or update.message.reply_to_message.caption
             match = re.search(r'\((\d+)\)', target_text)
+            
             if match:
                 target_id = int(match.group(1))
+                # Kirim ke user target
                 await context.bot.send_message(target_id, f"{text}")
-                await update.message.reply_text(f"✅ Terkirim ke `{target_id}`")
+                await update.message.reply_text(f"✅ Balasan terkirim ke `{target_id}`")
+                return  # BERHENTI DI SINI, jangan lanjut ke logika bawah
             else:
-                await update.message.reply_text("❌ ID user tidak ditemukan di log ini.")
+                await update.message.reply_text("❌ Gagal: Tidak ada ID user di pesan yang kamu reply.")
+                return
         except Exception as e:
-            await update.message.reply_text(f"❌ Error balas: {e}")
-        return
+            await update.message.reply_text(f"❌ Error: {e}")
+            return
 
-    # 2. DI PRIVATE CHAT (Kirim semua chat ke Admin)
-    if chat_type == "private" and uid != ADMIN_ID:
-        log_msg = f"💬 **PRIVATE CHAT**\nFrom: {user.first_name} ({uid})\nMsg: {text}"
-        await context.bot.send_message(ADMIN_ID, log_msg)
-        return
-
-    # 3. DI GRUP (Hanya jika reply BOT)
-    if chat_type != "private" and uid != ADMIN_ID:
-        if update.message.reply_to_message and update.message.reply_to_message.from_user.id == bot_obj.id:
+    # --- 2. LOGIKA UNTUK USER BIASA (Bukan Admin) ---
+    if uid != ADMIN_ID:
+        # Jika di Private Chat (Kirim semua ke Admin)
+        if chat_type == "private":
+            log_msg = f"💬 PRIVATE CHAT\nFrom: {user.first_name} ({uid})\nMsg: {text}"
+            await context.bot.send_message(ADMIN_ID, log_msg)
+        
+        # Jika di Grup (Hanya jika reply bot)
+        elif update.message.reply_to_message and update.message.reply_to_message.from_user.id == bot_obj.id:
             log_msg = (
                 f"👥 GROUP REPLY\n"
                 f"From: {user.first_name} ({uid})\n"
@@ -185,6 +207,7 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /login [password]\n"
         "• /keep [user] - buat autokeep\n"
         "• /stop - hentiin autokeep\n"
+        "• /bc - buat bc\n"
         "• /info \n\n"
         "Scanning:\n"
         "• /scanswitch \n"
@@ -282,9 +305,32 @@ async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ User {tid} Unbanned.")
     except: pass
 
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    
+    if not context.args:
+        await update.message.reply_text("Gunakan: /bc <pesan>")
+        return
+
+    pesan = " ".join(context.args)
+    sukses = 0
+    gagal = 0
+    
+    msg = await update.message.reply_text(f"📢 Memulai broadcast ke {len(ALL_USERS)} user...")
+
+    for user_id in list(ALL_USERS):
+        try:
+            await context.bot.send_message(user_id, f"{pesan}")
+            sukses += 1
+            await asyncio.sleep(0.05) 
+            gagal += 1
+    
+    await msg.edit_text(f"✅ Broadcast Selesai!\n\n🚀 Berhasil: {sukses}\n❌ Gagal: {gagal}")
+
 # ================== MAIN RUNNER ==================
 async def main():
     load_bans()
+    load_users()
     await init_clients()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
@@ -294,6 +340,7 @@ async def main():
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("ban", ban))
     app.add_handler(CommandHandler("unban", unban))
+    app.add_handler(CommandHandler("bc", broadcast))
 
     # Registrasi Scan Commands secara Otomatis
     scans = [
