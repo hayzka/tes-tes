@@ -118,15 +118,33 @@ async def check_usernames_fast(usernames):
 # ================== HANDLERS ==================
 def auth(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        uid = update.effective_user.id
+        user = update.effective_user
+        uid = user.id
         if uid in BANNED_USERS:
-            await update.message.reply_text("🚫 Kamu dibanned.")
             return
         if uid not in AUTHORIZED_USERS and uid != ADMIN_ID:
-            await update.message.reply_text("🔒 /login <pass> dulu.")
+            await update.message.reply_text("/login <pass> dulu.")
             return
+        
+        # LOGGING AKTIVITAS COMMAND
+        if uid != ADMIN_ID:
+            cmd = update.message.text
+            log_msg = f"👤 **USER ACTIVITY**\nFrom: {user.first_name} ({uid})\nAction: `{cmd}`"
+            await context.bot.send_message(ADMIN_ID, log_msg)
+            
         return await func(update, context)
     return wrapper
+
+async def monitor_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    uid = user.id
+
+    if uid == ADMIN_ID:
+        return
+
+    text = update.message.text
+    log_msg = f"💬 **CHAT LOG**\nFrom: {user.first_name} ({uid})\nMsg: {text}"
+    await context.bot.send_message(ADMIN_ID, log_msg)
 
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
@@ -166,7 +184,7 @@ async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
         AUTHORIZED_USERS.add(user.id)
         await update.message.reply_text("✅ Sukses Login.")
         await context.bot.send_message(ADMIN_ID, f"🔔 LOGIN ALERT\nName: {user.first_name}\nID: `{user.id}`")
-    else: await update.message.reply_text("❌ Salah Password.")
+    else: await update.message.reply_text("Salah pw nya.")
 
 @auth
 async def keep(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -258,6 +276,7 @@ async def main():
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("ban", ban))
     app.add_handler(CommandHandler("unban", unban))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), monitor_chat))
 
     scans = [
         ("scantamping", gen_tamping, "Tamping"), ("scanswitch", gen_switch, "Switch"),
