@@ -132,28 +132,47 @@ async def check_usernames_fast(usernames):
     return [r for r in results if r]
 
 # ================== MONITORING & AUTH ==================
+
+
+import os
+import re
+from telegram import Update
+from telegram.ext import ContextTypes
+
+# ID Pribadi kamu yang ada di Railway
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+
+# --- 1. DECORATOR AUTH (Notif Command) ---
 def auth(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
         uid = user.id
-        if uid in BANNED_USERS: return
+        text = update.message.text
+        chat_type = update.effective_chat.type
         
-        # Logika Notif jika belum login tapi pakai Command
+        # Cek Izin Login
         if uid not in AUTHORIZED_USERS and uid != ADMIN_ID:
-            log_msg = f"🔒 UNAUTHORIZED COMMAND\nUser: {user.first_name} ({uid})\nAction: `{update.message.text}`"
-            await context.bot.send_message(ADMIN_ID, log_msg)
-            await update.message.reply_text("/login pake pw dulu.")
+            await update.message.reply_text(" /login <pass> dulu.")
             return
+
+        # NOTIF COMMAND (Dari mana pun: Grup atau Private)
+        source = "GRUP" if chat_type != "private" else "PRIVATE"
+        log_text = (
+            f"⚡ COMMAND LOG ({source})\n"
+            f"👤 User: {user.first_name} ({uid})\n"
+            f"⌨️ Action: `{text}`"
+        )
         
-        # LOG SEMUA COMMAND (Aktivitas User Terpantau)
-        if uid != ADMIN_ID:
-            loc = "Grup" if update.effective_chat.type != "private" else "Private"
-            log_msg = f"⚡ ACTIVITY LOG ({loc})\nUser: {user.first_name} ({uid})\nAction: `{update.message.text}`"
-            await context.bot.send_message(ADMIN_ID, log_msg)
+        # Kirim notif hanya ke ID Pribadi kamu
+        try:
+            await context.bot.send_message(ADMIN_ID, log_text)
+        except:
+            pass
             
         return await func(update, context)
     return wrapper
 
+# --- 2. HANDLER PESAN (Private Chat & Group Reply) ---
 async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     uid = user.id
@@ -161,51 +180,45 @@ async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = update.effective_chat.type
     bot_obj = await context.bot.get_me()
 
-    # Pastikan ADMIN_ID adalah integer untuk perbandingan
-    admin_id_int = int(ADMIN_ID)
-
-    # ================== 1. KHUSUS ADMIN REPLY ==================
-    if uid == admin_id_int and update.message.reply_to_message:
-        # Ambil teks dari pesan yang di-reply admin
+    # ==========================================
+    # A. FITUR REPLY ADMIN (Kamu balas log)
+    # ==========================================
+    if uid == ADMIN_ID and update.message.reply_to_message:
         reply_to = update.message.reply_to_message
         target_text = reply_to.text or reply_to.caption
-        
         if target_text:
-            import re
-            # Mencari ID di dalam kurung ( )
             match = re.search(r'\((\d+)\)', target_text)
             if match:
                 target_id = int(match.group(1))
                 try:
                     await context.bot.send_message(target_id, f"{text}")
                     await update.message.reply_text(f"✅ Terkirim ke `{target_id}`")
-                except Exception as e:
-                    await update.message.reply_text(f"❌ Gagal kirim: {e}")
-                return # STOP! Jangan lanjut ke bawah
+                    return
+                except: return
 
-    # ================== 2. LOGIKA UNTUK USER (NON-ADMIN) ==================
-    if uid != admin_id_int:
-        # Simpan user ke database broadcast
-        if 'save_user' in globals():
-            save_user(uid)
+    # ==========================================
+    # B. LOGIKA FILTER NOTIFIKASI
+    # ==========================================
+    if uid != ADMIN_ID:
+        # Simpan user untuk database Broadcast
+        if 'save_user' in globals(): save_user(uid)
 
-        # Jika chat di Private (BOT)
+        # KONDISI 1: Chat di PRIVATE (Semua dikirim ke kamu)
         if chat_type == "private":
-            log_msg = f"💬 BOT\nFrom: {user.first_name} ({uid})\nMsg: {text}"
-            await context.bot.send_message(admin_id_int, log_msg)
+            # Jika user ketik chat biasa (bukan command, karena command sudah di-handle @auth)
+            if not text.startswith('/'):
+                log_pc = f"📥 PRIVATE MESSAGE\n👤 From: {user.first_name} ({uid})\n📝 Msg: {text}"
+                await context.bot.send_message(ADMIN_ID, log_pc)
             return
 
-        # Jika chat di Grup (Hanya jika reply bot)
-        elif update.message.reply_to_message and update.message.reply_to_message.from_user.id == bot_obj.id:
-            log_msg = (
-                f"👥 **GROUP REPLY**\n"
-                f"From: {user.first_name} ({uid})\n"
-                f"Group: {update.effective_chat.title}\n"
-                f"Msg: {text}"
-            )
-            await context.bot.send_message(admin_id_int, log_msg)
+        # KONDISI 2: Chat di GRUP (Hanya log jika USER REPLY BOT)
+        elif chat_type != "private":
+            if update.message.reply_to_message and update.message.reply_to_message.from_user.id == bot_obj.id:
+                log_grp = f"👥 GROUP REPLY\n👤 From: {user.first_name} ({uid})\n📝 Msg: {text}"
+                await context.bot.send_message(ADMIN_ID, log_grp)
             return
 
+    # Chat biasa di grup (bukan command & bukan reply bot) akan DIABAIKAN.
 # ================== COMMAND HANDLERS ==================
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
