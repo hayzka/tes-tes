@@ -116,35 +116,58 @@ async def check_usernames_fast(usernames):
     return [r for r in results if r]
 
 # ================== HANDLERS ==================
+# ================== MONITORING & AUTH ==================
+
 def auth(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
         uid = user.id
-        if uid in BANNED_USERS:
-            return
+        
+        if uid in BANNED_USERS: return
+            
         if uid not in AUTHORIZED_USERS and uid != ADMIN_ID:
-            await update.message.reply_text("/login <pass> dulu.")
+            await update.message.reply_text("🔒 /login <pass> dulu.")
             return
         
-        # LOGGING AKTIVITAS COMMAND
+        # LOG SEMUA COMMAND (Aktivitas user terpantau di sini)
         if uid != ADMIN_ID:
             cmd = update.message.text
-            log_msg = f"👤 **USER ACTIVITY**\nFrom: {user.first_name} ({uid})\nAction: `{cmd}`"
-            await context.bot.send_message(ADMIN_ID, log_msg)
+            log_msg = f"⚡ **ACTIVITY LOG**\nUser: {user.first_name} ({uid})\nAction: `{cmd}`"
+            try:
+                await context.bot.send_message(ADMIN_ID, log_msg)
+            except: pass
             
         return await func(update, context)
     return wrapper
 
-async def monitor_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     uid = user.id
+    text = update.message.text
+    bot_obj = await context.bot.get_me()
 
-    if uid == ADMIN_ID:
+    # 1. JIKA ADMIN REPLY LOG (Kirim pesan balik ke User)
+    if uid == ADMIN_ID and update.message.reply_to_message:
+        try:
+            import re
+            target_text = update.message.reply_to_message.text or update.message.reply_to_message.caption
+            match = re.search(r'\((\d+)\)', target_text)
+            
+            if match:
+                target_id = int(match.group(1))
+                await context.bot.send_message(target_id, f"💬 **Pesan dari Admin:**\n{text}")
+                await update.message.reply_text("✅ Terkirim.")
+            else:
+                await update.message.reply_text("❌ ID tidak ditemukan di pesan log.")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {e}")
         return
 
-    text = update.message.text
-    log_msg = f"💬 **CHAT LOG**\nFrom: {user.first_name} ({uid})\nMsg: {text}"
-    await context.bot.send_message(ADMIN_ID, log_msg)
+    # 2. JIKA USER REPLY BOT (Teruskan ke Admin)
+    if uid != ADMIN_ID and update.message.reply_to_message:
+        if update.message.reply_to_message.from_user.id == bot_obj.id:
+            log_msg = f"💬 **USER REPLY BOT**\nFrom: {user.first_name} ({uid})\nMsg: {text}"
+            await context.bot.send_message(ADMIN_ID, log_msg)
 
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
@@ -270,13 +293,14 @@ async def main():
     await init_clients()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
+
     app.add_handler(CommandHandler("login", login))
     app.add_handler(CommandHandler("info", info))
     app.add_handler(CommandHandler("keep", keep))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("ban", ban))
     app.add_handler(CommandHandler("unban", unban))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), monitor_chat))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_msg))
 
     scans = [
         ("scantamping", gen_tamping, "Tamping"), ("scanswitch", gen_switch, "Switch"),
