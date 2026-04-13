@@ -59,7 +59,53 @@ def save_ban(user_id):
     with open(BAN_FILE, "a") as f:
         f.write(f"{user_id}\n")
 
-# ================== GENERATORS ==================
+async def check_status(client, username):
+    try:
+        # Coba ambil informasi entity
+        entity = await client.get_entity(username)
+        
+        # Jika berhasil ditarik, berarti username SUDAH DIAMBIL (SOLD/TAKEN)
+        # Cek apakah itu Channel, Group, atau User
+        from telethon.tl.types import Channel, Chat, User
+        if isinstance(entity, Channel):
+            return "SOLD (CH/GRUP)"
+        elif isinstance(entity, User):
+            return "SOLD (USER)"
+        return "SOLD"
+
+    except Exception as e:
+        err = str(e).lower()
+        
+        # 1. BANNED / SPAM (Username ada tapi tidak bisa diakses/dilihat)
+        if "banned" in err or "spam" in err:
+            return "BANNED"
+        
+        # 2. FRAGMENT (Username dilelang, tidak bisa dipakai biasa)
+        # Biasanya muncul error 'not found' tapi di web Fragment statusnya auction
+        if "collectible" in err:
+            return "FRAGMENT"
+            
+        # 3. BISA DIKEEP (Username benar-benar tidak ditemukan)
+        if "no node found" in err or "not found" in err:
+            return "BISA DIKEEP"
+            
+        # 4. ERROR LAIN (Limit atau Flood)
+        return "UNKNOWN / FLOOD"
+
+async def scan_list(update, context, list_username):
+    results = []
+    # Gunakan client telethon kamu di sini
+    client = your_telethon_client 
+
+    for username in list_username:
+        status = await check_status(client, username)
+        results.append(f"@{username} -> {status}")
+    
+    # Gabungkan jadi satu pesan panjang
+    pesan_akhir = "Daftar Hasil Scan:\n\n" + "\n".join(results)
+    await update.message.reply_text(pesan_akhir)
+
+                                                   # ================== GENERATORS ==================
 rata, tdk_rata, vokal = "asweruiozxcvnm", "qtypdfghjklb", "aeiou"
 
 def gen_tamhur(b): return list({b[:i] + l + b[i:] for i in range(len(b)+1) for l in string.ascii_lowercase})
