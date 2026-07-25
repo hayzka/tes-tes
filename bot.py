@@ -6,18 +6,18 @@ import re
 import asyncio
 import nest_asyncio
 
-# Set up logger agar perintah logger.info / logger.error tidak crash
+# Set up logger agar perintah logger.info / logger.error berjalan dengan benar
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 1. Jalankan nest_asyncio dan load file .env di bagian paling atas
+# 1. Jalankan nest_asyncio dan load file .env
 nest_asyncio.apply()
 from dotenv import load_dotenv
 load_dotenv()
 
 # 2. Import library Telegram
 from telethon import TelegramClient, functions
-from telethon.errors import FloodWaitError, RPCError
+from telethon.errors import FloodWaitError
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
@@ -28,7 +28,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 PASSWORD = os.getenv("PASSWORD", "nephis")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
-# Gunakan folder lokal saat ini agar tidak terkena Permission Error di Termux
+# Lokasi penyimpanan database teks di Termux
 DATA_DIR = "./" 
 BAN_FILE = f"{DATA_DIR}banned.txt"
 USER_FILE = f"{DATA_DIR}users.txt"
@@ -39,10 +39,9 @@ clients = []
 client_cooldown = {}
 running_tasks = {}
 client_index = 0
-
-# ================== PERSISTENCE ==================
 ALL_USERS = set()
 
+# ================== PERSISTENCE ==================
 def load_users():
     if os.path.exists(USER_FILE):
         with open(USER_FILE, "r") as f:
@@ -72,24 +71,18 @@ async def check_status(client, username):
     try:
         entity = await client.get_entity(username)
         from telethon.tl.types import Channel, Chat, User
-        if isinstance(entity, Channel):
-            return "SOLD (CH/GRUP)"
-        elif isinstance(entity, User):
-            return "SOLD (USER)"
+        if isinstance(entity, Channel): return "SOLD (CH/GRUP)"
+        elif isinstance(entity, User): return "SOLD (USER)"
         return "SOLD"
     except Exception as e:
         err = str(e).lower()
-        if "banned" in err or "spam" in err:
-            return "BANNED"
-        if "collectible" in err:
-            return "FRAGMENT"
-        if "no node found" in err or "not found" in err:
-            return "BISA DIKEEP"
+        if "banned" in err or "spam" in err: return "BANNED"
+        if "collectible" in err: return "FRAGMENT"
+        if "no node found" in err or "not found" in err: return "BISA DIKEEP"
         return "UNKNOWN / FLOOD"
 
 async def scan_list(update, context, list_username):
     results = []
-    # Jika skrip membutuhkan client aktif pertama untuk scan_list biasa
     client = clients[0] if clients else None
     if not client:
         await update.message.reply_text("❌ Tidak ada akun Telethon yang aktif.")
@@ -178,7 +171,7 @@ async def check_usernames_fast(usernames):
     results = await asyncio.gather(*(worker(u) for u in usernames))
     return [r for r in results if r]
 
-# --- 1. DECORATOR AUTH ---
+# --- DECORATOR AUTH ---
 def auth(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
@@ -187,24 +180,18 @@ def auth(func):
         chat_type = update.effective_chat.type
         
         if uid not in AUTHORIZED_USERS and uid != ADMIN_ID:
-            await update.message.reply_text(" /login <pass> dulu.")
+            await update.message.reply_text("⚠️ Silakan /login <password> terlebih dahulu.")
             return
 
         source = "GRUP" if chat_type != "private" else "PRIVATE"
-        log_text = (
-            f"⚡ COMMAND LOG ({source})\n"
-            f"👤 User: {user.first_name} ({uid})\n"
-            f"⌨️ Action: `{text}`"
-        )
-        try:
-            await context.bot.send_message(ADMIN_ID, log_text)
-        except:
-            pass
+        log_text = f"⚡ COMMAND LOG ({source})\n👤 User: {user.first_name} ({uid})\n⌨️ Action: `{text}`"
+        try: await context.bot.send_message(ADMIN_ID, log_text)
+        except: pass
             
         return await func(update, context)
     return wrapper
 
-# --- 2. HANDLER PESAN ---
+# --- HANDLER PESAN ---
 async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     uid = user.id
@@ -226,7 +213,7 @@ async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except: return
 
     if uid != ADMIN_ID:
-        if 'save_user' in globals(): save_user(uid)
+        save_user(uid)
         if chat_type == "private":
             if not text.startswith('/'):
                 log_pc = f"📥 PRIVATE MESSAGE\n👤 From: {user.first_name} ({uid})\n📝 Msg: {text}"
@@ -250,15 +237,13 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Scanning:\n"
         "• /scanswitch \n"
         "• /scankurhur \n"
-        "• /scancadel - 'wycl'\n\n"
-        "Scanning:\n"
+        "• /scancadel - 'wycl'\n"
         "• /scanrata\n"
         "• /scantidakrata\n"
         "• /scanvokal\n"
         "• /scanuncommon\n"
         "• /scantamhur\n"
-        "• /scanganhur\n"
-        "Noted: keep jangan sering dipake"
+        "• /scanganhur"
     )
     await update.message.reply_text(help_text)
 
@@ -360,16 +345,11 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Gagal kirim ke {user_id}: {e}")
             gagal += 1
     
-    await progress_msg.edit_text(
-        f"✅ Broadcast Selesai!\n\n🚀 Berhasil: {sukses}\n❌ Gagal: {gagal}\n📊 Total Target: {total}"
-    )
+    await progress_msg.edit_text(f"✅ Broadcast Selesai!\n\n🚀 Berhasil: {sukses}\n❌ Gagal: {gagal}")
 
 # ================== MAIN RUNNER ==================
-# ================== MAIN RUNNER (FIXED FOR PYTHON 3.14) ==================
-
 async def post_init(application):
-    """Fungsi ini berjalan otomatis di dalam task context setelah bot siap,
-       sehingga aman untuk menginisialisasi client Telethon tanpa memicu crash."""
+    """Menjalankan koneksi Telethon setelah loop utama bot terbentuk sempurna."""
     logger.info("⚙️ Menginisialisasi akun-akun Telethon...")
     await init_clients()
     logger.info(f"📊 Total akun Telethon aktif: {len(clients)} akun.")
@@ -382,10 +362,8 @@ def main():
         logger.error("❌ BOT_TOKEN tidak ditemukan di file .env")
         return
         
-    # Membangun aplikasi Telegram Bot
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
 
-    # Mendaftarkan semua Command Handler
     app.add_handler(CommandHandler("bc", broadcast))
     app.add_handler(CommandHandler("login", login))
     app.add_handler(CommandHandler("info", info))
@@ -394,7 +372,6 @@ def main():
     app.add_handler(CommandHandler("ban", ban))
     app.add_handler(CommandHandler("unban", unban))
 
-    # Mendaftarkan Scan Handler secara dinamis
     scans = [
         ("scantamping", gen_tamping, "Tamping"), ("scanswitch", gen_switch, "Switch"),
         ("scantamhur", gen_tamhur, "Tamhur"), ("scanganhur", gen_ganhur, "Ganhur"),
@@ -408,12 +385,9 @@ def main():
     for cmd, gen, lbl in scans:
         app.add_handler(CommandHandler(cmd, create_scan(gen, lbl)))
 
-    # Mendaftarkan Message Handler untuk teks biasa
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_msg))
 
     logger.info("🚀 Memulai bot menggunakan run_polling...")
-    
-    # run_polling menangani pembukaan & penutupan event loop dengan aman di Python 3.14
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
