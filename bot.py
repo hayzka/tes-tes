@@ -408,5 +408,13 @@ async def main():
             await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    # Menghapus try-except bisu agar error asli terlihat di Termux jika terjadi sesuatu
-    asyncio.run(main())
+    print("::: MEMULAI LOOP UTAMA PYTHON :::", flush=True)
+    loop = asyncio.get_event_loop()
+    try:
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        print("\n🚫 Bot dimatikan oleh pengguna.")
+    except Exception as fatal_error:
+        import traceback
+        print("\n❌ TERJADI ERROR FATAL:", flush=True)
+        traceback.print_exc()
