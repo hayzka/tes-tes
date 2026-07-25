@@ -365,17 +365,27 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ================== MAIN RUNNER ==================
-async def main():
+# ================== MAIN RUNNER (FIXED FOR PYTHON 3.14) ==================
+
+async def post_init(application):
+    """Fungsi ini berjalan otomatis di dalam task context setelah bot siap,
+       sehingga aman untuk menginisialisasi client Telethon tanpa memicu crash."""
+    logger.info("⚙️ Menginisialisasi akun-akun Telethon...")
+    await init_clients()
+    logger.info(f"📊 Total akun Telethon aktif: {len(clients)} akun.")
+
+def main():
     load_bans()
     load_users()
-    await init_clients()
     
     if not BOT_TOKEN:
         logger.error("❌ BOT_TOKEN tidak ditemukan di file .env")
         return
         
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    # Membangun aplikasi Telegram Bot
+    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
 
+    # Mendaftarkan semua Command Handler
     app.add_handler(CommandHandler("bc", broadcast))
     app.add_handler(CommandHandler("login", login))
     app.add_handler(CommandHandler("info", info))
@@ -384,6 +394,7 @@ async def main():
     app.add_handler(CommandHandler("ban", ban))
     app.add_handler(CommandHandler("unban", unban))
 
+    # Mendaftarkan Scan Handler secara dinamis
     scans = [
         ("scantamping", gen_tamping, "Tamping"), ("scanswitch", gen_switch, "Switch"),
         ("scantamhur", gen_tamhur, "Tamhur"), ("scanganhur", gen_ganhur, "Ganhur"),
@@ -397,21 +408,18 @@ async def main():
     for cmd, gen, lbl in scans:
         app.add_handler(CommandHandler(cmd, create_scan(gen, lbl)))
 
+    # Mendaftarkan Message Handler untuk teks biasa
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_msg))
 
-    async with app:
-        await app.initialize()
-        await app.start()
-        await app.updater.start_polling(drop_pending_updates=True)
-        logger.info("🚀 BOT IS ONLINE & RUNNING")
-        while True: 
-            await asyncio.sleep(3600)
+    logger.info("🚀 Memulai bot menggunakan run_polling...")
+    
+    # run_polling menangani pembukaan & penutupan event loop dengan aman di Python 3.14
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    print("::: MEMULAI LOOP UTAMA PYTHON :::", flush=True)
-    loop = asyncio.get_event_loop()
+    print("::: MEMULAI BOT TELEGRAM (PYTHON 3.14 MODE) :::", flush=True)
     try:
-        loop.run_until_complete(main())
+        main()
     except KeyboardInterrupt:
         print("\n🚫 Bot dimatikan oleh pengguna.")
     except Exception as fatal_error:
