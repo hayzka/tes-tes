@@ -1,21 +1,24 @@
-import nest_asyncio
-nest_asyncio.apply()
-
-import asyncio
 import os
 import string
 import time
 import logging
 import re
+import asyncio
+import nest_asyncio
+
+# 1. Jalankan nest_asyncio dan load file .env di bagian paling atas
+nest_asyncio.apply()
+from dotenv import load_dotenv
+load_dotenv()
+
+# 2. Import library Telegram
 from telethon import TelegramClient, functions
 from telethon.errors import FloodWaitError, RPCError
 from telegram import Update
+# PERBAIKAN: Baris di bawah ini harus menyambung, tidak boleh terpotong ke baris baru
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# ================== CONFIG & LOGGING ==================
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
-
+# 3. Baru masukkan variabel os.getenv kamu di sini
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
