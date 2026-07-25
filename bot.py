@@ -25,6 +25,10 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 PASSWORD = os.getenv("PASSWORD", "nephis")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
+# TAMBAHKAN DUA BARIS INI UNTUK TES:
+print("API ID Berhasil Dibaca:", API_ID)
+print("Bot sedang berjalan...")
+
 DATA_DIR = "/data/" if os.path.exists("/data") else "./"
 BAN_FILE = f"{DATA_DIR}banned.txt"
 
