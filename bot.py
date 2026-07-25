@@ -6,6 +6,10 @@ import re
 import asyncio
 import nest_asyncio
 
+# Set up logger agar perintah logger.info / logger.error tidak crash
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # 1. Jalankan nest_asyncio dan load file .env di bagian paling atas
 nest_asyncio.apply()
 from dotenv import load_dotenv
@@ -24,7 +28,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 PASSWORD = os.getenv("PASSWORD", "nephis")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
-# PERBAIKAN FOLDER: Gunakan folder lokal saat ini agar tidak terkena Permission Error di Termux
+# Gunakan folder lokal saat ini agar tidak terkena Permission Error di Termux
 DATA_DIR = "./" 
 BAN_FILE = f"{DATA_DIR}banned.txt"
 USER_FILE = f"{DATA_DIR}users.txt"
@@ -52,13 +56,12 @@ def save_user(user_id):
         with open(USER_FILE, "a") as f:
             f.write(f"{user_id}\n")
 
-# Lanjutkan sisa fungsi load_bans() dan logika bot kamu di bawah ini...
-
 def load_bans():
     if os.path.exists(BAN_FILE):
         with open(BAN_FILE, "r") as f:
             for line in f:
-                if line.strip(): BANNED_USERS.add(int(line.strip()))
+                if line.strip(): 
+                    BANNED_USERS.add(int(line.strip()))
 
 def save_ban(user_id):
     BANNED_USERS.add(user_id)
@@ -67,51 +70,39 @@ def save_ban(user_id):
 
 async def check_status(client, username):
     try:
-        # Coba ambil informasi entity
         entity = await client.get_entity(username)
-        
-        # Jika berhasil ditarik, berarti username SUDAH DIAMBIL (SOLD/TAKEN)
-        # Cek apakah itu Channel, Group, atau User
         from telethon.tl.types import Channel, Chat, User
         if isinstance(entity, Channel):
             return "SOLD (CH/GRUP)"
         elif isinstance(entity, User):
             return "SOLD (USER)"
         return "SOLD"
-
     except Exception as e:
         err = str(e).lower()
-        
-        # 1. BANNED / SPAM (Username ada tapi tidak bisa diakses/dilihat)
         if "banned" in err or "spam" in err:
             return "BANNED"
-        
-        # 2. FRAGMENT (Username dilelang, tidak bisa dipakai biasa)
-        # Biasanya muncul error 'not found' tapi di web Fragment statusnya auction
         if "collectible" in err:
             return "FRAGMENT"
-            
-        # 3. BISA DIKEEP (Username benar-benar tidak ditemukan)
         if "no node found" in err or "not found" in err:
             return "BISA DIKEEP"
-            
-        # 4. ERROR LAIN (Limit atau Flood)
         return "UNKNOWN / FLOOD"
 
 async def scan_list(update, context, list_username):
     results = []
-    # Gunakan client telethon kamu di sini
-    client = your_telethon_client 
+    # Jika skrip membutuhkan client aktif pertama untuk scan_list biasa
+    client = clients[0] if clients else None
+    if not client:
+        await update.message.reply_text("❌ Tidak ada akun Telethon yang aktif.")
+        return
 
     for username in list_username:
         status = await check_status(client, username)
         results.append(f"@{username} -> {status}")
     
-    # Gabungkan jadi satu pesan panjang
     pesan_akhir = "Daftar Hasil Scan:\n\n" + "\n".join(results)
     await update.message.reply_text(pesan_akhir)
 
-                                                   # ================== GENERATORS ==================
+# ================== GENERATORS ==================
 rata, tdk_rata, vokal = "asweruiozxcvnm", "qtypdfghjklb", "aeiou"
 
 def gen_tamhur(b): return list({b[:i] + l + b[i:] for i in range(len(b)+1) for l in string.ascii_lowercase})
@@ -141,7 +132,9 @@ def gen_cadel(b): return list({b[:i] + l + b[i:] for i in range(len(b)+1) for l 
 
 # ================== CORE LOGIC ==================
 async def init_clients():
-    if not API_ID or not API_HASH: return
+    if not API_ID or not API_HASH: 
+        logger.error("❌ API_ID atau API_HASH kosong di .env")
+        return
     for i in range(1, 11):
         s = f"{DATA_DIR}acc{i}"
         try:
@@ -151,8 +144,10 @@ async def init_clients():
                 clients.append(c)
                 client_cooldown[c] = 0
                 logger.info(f"✅ acc{i} Ready")
-            else: await c.disconnect()
-        except Exception as e: logger.error(f"❌ acc{i}: {e}")
+            else: 
+                await c.disconnect()
+        except Exception as e: 
+            logger.error(f"❌ acc{i}: {e}")
 
 def get_available_client():
     global client_index
@@ -183,18 +178,7 @@ async def check_usernames_fast(usernames):
     results = await asyncio.gather(*(worker(u) for u in usernames))
     return [r for r in results if r]
 
-# ================== MONITORING & AUTH ==================
-
-
-import os
-import re
-from telegram import Update
-from telegram.ext import ContextTypes
-
-# ID Pribadi kamu yang ada di Railway
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-
-# --- 1. DECORATOR AUTH (Notif Command) ---
+# --- 1. DECORATOR AUTH ---
 def auth(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
@@ -202,20 +186,16 @@ def auth(func):
         text = update.message.text
         chat_type = update.effective_chat.type
         
-        # Cek Izin Login
         if uid not in AUTHORIZED_USERS and uid != ADMIN_ID:
             await update.message.reply_text(" /login <pass> dulu.")
             return
 
-        # NOTIF COMMAND (Dari mana pun: Grup atau Private)
         source = "GRUP" if chat_type != "private" else "PRIVATE"
         log_text = (
             f"⚡ COMMAND LOG ({source})\n"
             f"👤 User: {user.first_name} ({uid})\n"
             f"⌨️ Action: `{text}`"
         )
-        
-        # Kirim notif hanya ke ID Pribadi kamu
         try:
             await context.bot.send_message(ADMIN_ID, log_text)
         except:
@@ -224,7 +204,7 @@ def auth(func):
         return await func(update, context)
     return wrapper
 
-# --- 2. HANDLER PESAN (Private Chat & Group Reply) ---
+# --- 2. HANDLER PESAN ---
 async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     uid = user.id
@@ -232,9 +212,6 @@ async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = update.effective_chat.type
     bot_obj = await context.bot.get_me()
 
-    # ==========================================
-    # A. FITUR REPLY ADMIN (Kamu balas log)
-    # ==========================================
     if uid == ADMIN_ID and update.message.reply_to_message:
         reply_to = update.message.reply_to_message
         target_text = reply_to.text or reply_to.caption
@@ -248,29 +225,19 @@ async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
                 except: return
 
-    # ==========================================
-    # B. LOGIKA FILTER NOTIFIKASI
-    # ==========================================
     if uid != ADMIN_ID:
-        # Simpan user untuk database Broadcast
         if 'save_user' in globals(): save_user(uid)
-
-        # KONDISI 1: Chat di PRIVATE (Semua dikirim ke kamu)
         if chat_type == "private":
-            # Jika user ketik chat biasa (bukan command, karena command sudah di-handle @auth)
             if not text.startswith('/'):
                 log_pc = f"📥 PRIVATE MESSAGE\n👤 From: {user.first_name} ({uid})\n📝 Msg: {text}"
                 await context.bot.send_message(ADMIN_ID, log_pc)
             return
-
-        # KONDISI 2: Chat di GRUP (Hanya log jika USER REPLY BOT)
         elif chat_type != "private":
             if update.message.reply_to_message and update.message.reply_to_message.from_user.id == bot_obj.id:
                 log_grp = f"👥 GROUP REPLY\n👤 From: {user.first_name} ({uid})\n📝 Msg: {text}"
                 await context.bot.send_message(ADMIN_ID, log_grp)
             return
 
-    # Chat biasa di grup (bukan command & bukan reply bot) akan DIABAIKAN.
 # ================== COMMAND HANDLERS ==================
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
@@ -285,21 +252,12 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /scankurhur \n"
         "• /scancadel - 'wycl'\n\n"
         "Scanning:\n"
-        "• /scanrata - tamhur rata\n"
-        "• /scantidakrata - tamhur gak rata\n"
-        "• /scanvokal - tamhur vokal\n"
-        "• /scanuncommon - sop, scannon, cannon\n"
+        "• /scanrata\n"
+        "• /scantidakrata\n"
+        "• /scanvokal\n"
+        "• /scanuncommon\n"
         "• /scantamhur\n"
         "• /scanganhur\n"
-        "• /scanswitch \n\n"
-        "Scanning Tamping:\n"
-        "• /scantamping \n"
-        "• /scantampingrata \n"
-        "• /scantampingtidakrata \n\n"
-        "Scanning Tamdal:\n"
-        "• /scantamdal \n"
-        "• /scantamdalrata \n"
-        "• /scantamdaltidakrata \n\n"
         "Noted: keep jangan sering dipake"
     )
     await update.message.reply_text(help_text)
@@ -377,17 +335,12 @@ async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: pass
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Hanya Admin yang bisa broadcast
-    if update.effective_user.id != ADMIN_ID:
-        return
-
+    if update.effective_user.id != ADMIN_ID: return
     if not context.args:
         await update.message.reply_text("❌ Format salah! Gunakan: `/bc <pesan>`")
         return
 
     pesan_bc = " ".join(context.args)
-    
-    # Ambil daftar user unik dari set ALL_USERS
     targets = list(ALL_USERS)
     total = len(targets)
     
@@ -396,31 +349,19 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     progress_msg = await update.message.reply_text(f"📢 Memulai broadcast ke {total} user...")
-    
-    sukses = 0
-    gagal = 0
+    sukses, gagal = 0, 0
 
     for user_id in targets:
         try:
-            # Kirim pesan broadcast
-            await context.bot.send_message(
-                chat_id=user_id, 
-                text=f"{pesan_bc}",
-                parse_mode='Markdown'
-            )
+            await context.bot.send_message(chat_id=user_id, text=f"{pesan_bc}", parse_mode='Markdown')
             sukses += 1
-            # Jeda 0.05 detik agar tidak terkena Flood Limit Telegram
             await asyncio.sleep(0.05) 
         except Exception as e:
             logger.error(f"Gagal kirim ke {user_id}: {e}")
             gagal += 1
     
-    # Laporan Akhir (Potongan kode yang kamu kirim)
     await progress_msg.edit_text(
-        f"✅ Broadcast Selesai!\n\n"
-        f"🚀 Berhasil: {sukses}\n"
-        f"❌ Gagal: {gagal}\n"
-        f"📊 Total Target: {total}"
+        f"✅ Broadcast Selesai!\n\n🚀 Berhasil: {sukses}\n❌ Gagal: {gagal}\n📊 Total Target: {total}"
     )
 
 # ================== MAIN RUNNER ==================
@@ -428,6 +369,11 @@ async def main():
     load_bans()
     load_users()
     await init_clients()
+    
+    if not BOT_TOKEN:
+        logger.error("❌ BOT_TOKEN tidak ditemukan di file .env")
+        return
+        
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("bc", broadcast))
@@ -437,14 +383,12 @@ async def main():
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("ban", ban))
     app.add_handler(CommandHandler("unban", unban))
-    
 
-    # Registrasi Scan Commands secara Otomatis
     scans = [
         ("scantamping", gen_tamping, "Tamping"), ("scanswitch", gen_switch, "Switch"),
         ("scantamhur", gen_tamhur, "Tamhur"), ("scanganhur", gen_ganhur, "Ganhur"),
         ("scanuncommon", gen_uncommon, "Uncommon"), ("scankurhur", gen_kurhur, "Kurhur"),
-        ("scancadel", gen_cadel, "Cadel"), ("scanuncommon", gen_canon, "Uncommon"), ("scanrata", gen_rata, "Rata"), 
+        ("scancadel", gen_cadel, "Cadel"), ("scanrata", gen_rata, "Rata"), 
         ("scantidakrata", gen_tidakrata, "Tdk Rata"), ("scanvokal", gen_vokal, "Vokal"), 
         ("scantampingrata", gen_tampingrata, "Tamping Rata"), ("scantampingtidakrata", gen_tampingtidakrata, "Tamping Tdk Rata"), 
         ("scantamdal", gen_tamdal, "Tamdal"), ("scantamdalrata", gen_tamdalrata, "Tamdal Rata"), 
@@ -453,16 +397,16 @@ async def main():
     for cmd, gen, lbl in scans:
         app.add_handler(CommandHandler(cmd, create_scan(gen, lbl)))
 
-    # Chat & Reply Monitoring Handler
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_msg))
 
     async with app:
         await app.initialize()
         await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
-        logger.info("🚀 BOT IS ONLINE")
-        while True: await asyncio.sleep(3600)
+        logger.info("🚀 BOT IS ONLINE & RUNNING")
+        while True: 
+            await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    try: asyncio.run(main())
-    except: pass
+    # Menghapus try-except bisu agar error asli terlihat di Termux jika terjadi sesuatu
+    asyncio.run(main())
