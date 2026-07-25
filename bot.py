@@ -15,22 +15,19 @@ load_dotenv()
 from telethon import TelegramClient, functions
 from telethon.errors import FloodWaitError, RPCError
 from telegram import Update
-# PERBAIKAN: Baris di bawah ini harus menyambung, tidak boleh terpotong ke baris baru
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# 3. Baru masukkan variabel os.getenv kamu di sini
+# 3. Masukkan variabel os.getenv
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PASSWORD = os.getenv("PASSWORD", "nephis")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
-# TAMBAHKAN DUA BARIS INI UNTUK TES:
-print("API ID Berhasil Dibaca:", API_ID)
-print("Bot sedang berjalan...")
-
-DATA_DIR = "/data/" if os.path.exists("/data") else "./"
+# PERBAIKAN FOLDER: Gunakan folder lokal saat ini agar tidak terkena Permission Error di Termux
+DATA_DIR = "./" 
 BAN_FILE = f"{DATA_DIR}banned.txt"
+USER_FILE = f"{DATA_DIR}users.txt"
 
 AUTHORIZED_USERS = set()
 BANNED_USERS = set()
@@ -40,20 +37,22 @@ running_tasks = {}
 client_index = 0
 
 # ================== PERSISTENCE ==================
-USER_FILE = f"{DATA_DIR}users.txt"
 ALL_USERS = set()
 
 def load_users():
     if os.path.exists(USER_FILE):
         with open(USER_FILE, "r") as f:
             for line in f:
-                if line.strip(): ALL_USERS.add(int(line.strip()))
+                if line.strip(): 
+                    ALL_USERS.add(int(line.strip()))
 
 def save_user(user_id):
     if user_id not in ALL_USERS:
         ALL_USERS.add(user_id)
         with open(USER_FILE, "a") as f:
             f.write(f"{user_id}\n")
+
+# Lanjutkan sisa fungsi load_bans() dan logika bot kamu di bawah ini...
 
 def load_bans():
     if os.path.exists(BAN_FILE):
