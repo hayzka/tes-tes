@@ -141,20 +141,25 @@ def build_pagination_keyboard(current_page, total_pages, target_base, mode_key):
     return InlineKeyboardMarkup([buttons])
 
 # Task Async yang Menjalankan Scan LIVE Real-Time
-# Task Async yang Menjalankan Scan LIVE Real-Time (Aman dari Rate Limit)
+# Task Async yang Menjalankan Scan LIVE Real-Time (Dengan Penanganan Safety Check)
 async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id: str, mode_key: str, base: str):
+    # Validasi utama: Pastikan inline_message_id tidak None/kosong
+    if not inline_msg_id:
+        logger.error("❌ auto_scan_task_live dibatalkan: inline_message_id kosong.")
+        return
+
     if not clients:
         try:
             await context.bot.edit_message_text(
                 inline_message_id=inline_msg_id,
-                text="❌ ERROR: gua limit akun"
+                text="❌ ERROR: Tidak ada akun Telethon aktif/ready."
             )
-        except Exception:
-            pass
+        except Exception as err:
+            logger.error(f"Gagal kirim pesan error akun: {err}")
         return
 
     try:
-        gen_func, lbl = GENERATORS[mode_key]
+        gen_func, lbl = GENERATORS.get(mode_key, (gen_tamhur, "Tamhur"))
         raw_res = gen_func(base)
         if mode_key == "uncommon":
             raw_res += gen_canon(base)
@@ -184,8 +189,8 @@ async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id:
                             if now - last_update_time > 2.5:
                                 last_update_time = now
                                 live_text = (
-                                    f"Scanning @{base} ({lbl})...\n"
-                                    f"Ditemukan sejauh ini: {len(found_avail)}\n\n" +
+                                    f"scanning @{base} ({lbl})...\n"
+                                    f"ditemukan: {len(found_avail)}\n\n" +
                                     "\n".join(found_avail[:15]) +
                                     ("\n..." if len(found_avail) > 15 else "")
                                 )
@@ -194,9 +199,8 @@ async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id:
                                         inline_message_id=inline_msg_id,
                                         text=live_text
                                     )
-                                except Exception as live_err:
-                                    # Abaikan error edit sementara (misal: rate limit) agar worker tetap jalan
-                                    logger.debug(f"Abaikan live update error: {live_err}")
+                                except Exception:
+                                    pass
                             return res_str
                         return None
                     except FloodWaitError as e:
@@ -216,8 +220,8 @@ async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id:
                     inline_message_id=inline_msg_id,
                     text=f"❌ Gak ada username yang ketemu atau semua akun sedang limit untuk @{base}."
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Gagal edit pesan 'gak ketemu': {e}")
             return
 
         # Pecah hasil akhir ke beberapa halaman (Pagination)
@@ -231,8 +235,8 @@ async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id:
         }
 
         page_text = (
-            f"hasil scan untuk @{base} ({lbl}) "
-            f"ada {len(found_avail)} Username\n\n" + 
+            f"hasil scan untuk @{base} ({lbl})"
+            f"ada {len(found_avail)} usn\n\n" + 
             "\n".join(pages[0])
         )
         
@@ -258,35 +262,25 @@ async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id:
         except Exception:
             pass
 
-        # Pecah hasil akhir ke beberapa halaman (Pagination)
-        pages = chunk_results(found_avail, chunk_size=15)
+
+# ================== CHOSEN INLINE RESULT ==================
+async def chosen_inline_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chosen = update.chosen_inline_result
+    inline_msg_id = chosen.inline_message_id
+    result_id = chosen.result_id
+
+    # Pastikan inline_message_id benar-benar ada dari update Telegram
+    if not inline_msg_id:
+        logger.warning("⚠️ ChosenInlineResult diterima tanpa inline_message_id!")
+        return
+
+    parts = result_id.split("_")
+    if len(parts) >= 3:
+        mode_key = parts[1]
+        base = parts[2]
         
-        SCAN_CACHE[inline_msg_id] = {
-            "pages": pages,
-            "mode_label": lbl,
-            "base": base,
-            "mode_key": mode_key
-        }
-
-        page_text = (
-            f"hasil scan untuk @{base} ({lbl}) ada {len(found_avail)} usn\n\n" + 
-            "\n".join(pages[0])
-        )
-        
-        reply_markup = build_pagination_keyboard(0, len(pages), base, mode_key)
-
-        await context.bot.edit_message_text(
-            inline_message_id=inline_msg_id,
-            text=page_text,
-            reply_markup=reply_markup
-        )
-
-    except Exception as e:
-        logger.error(f"❌ Error saat scan: {e}", exc_info=True)
-        await context.bot.edit_message_text(
-            inline_message_id=inline_msg_id,
-            text=f"❌ Terjadi Error: {e}"
-        )
+        # Jalankan task live background dengan inline_msg_id yang terverifikasi
+        asyncio.create_task(auto_scan_task_live(context, inline_msg_id, mode_key, base))
 
 # ================== INLINE HANDLER ==================
 async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
