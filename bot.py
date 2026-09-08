@@ -6,12 +6,12 @@ import asyncio
 
 # Setup logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-# Sembunyikan log internal MTProtoSender Telethon
-logging.getLogger("telethon.network.mtprotosender").setLevel(logging.WARNING)
-logging.getLogger("telethon.network.telegrambarebodysender").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-# Sembunyikan log internal MTProtoSender Telethon
+# Sembunyikan log internal MTProtoSender Telethon agar terminal bersih
+logging.getLogger("telethon.network.mtprotosender").setLevel(logging.WARNING)
+logging.getLogger("telethon.network.telegrambarebodysender").setLevel(logging.WARNING)
+
 # Load dotenv jika dijalankan secara lokal
 try:
     from dotenv import load_dotenv
@@ -27,7 +27,7 @@ from telegram import (
 )
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, 
-    InlineQueryHandler, CallbackQueryHandler, ChosenInlineResultHandler, ContextTypes
+    InlineQueryHandler, CallbackQueryHandler, ContextTypes
 )
 
 # Configuration from Environment Variables
@@ -144,44 +144,79 @@ def build_pagination_keyboard(current_page, total_pages, target_base, mode_key):
     
     return InlineKeyboardMarkup([buttons])
 
-# Task Async yang Menjalankan Scan LIVE Real-Time
-# Task Async Universal (Bisa pakai inline_msg_id ATAU chat_id + message_id)
-async def auto_scan_task_live(
-    context: ContextTypes.DEFAULT_TYPE, 
-    inline_msg_id: str = None, 
-    chat_id: int = None, 
-    message_id: int = None, 
-    mode_key: str = "tamhur", 
-    base: str = ""
-):
-    # Helper untuk edit pesan universal
-    async def safe_edit_text(text: str, reply_markup=None):
-        try:
-            if inline_msg_id:
-                await context.bot.edit_message_text(
-                    inline_message_id=inline_msg_id,
-                    text=text,
-                    reply_markup=reply_markup
-                )
-            elif chat_id and message_id:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text=text,
-                    reply_markup=reply_markup
-                )
-        except Exception:
-            pass
+# ================== INLINE HANDLER ==================
+async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.inline_query.query.strip()
+    uid = update.inline_query.from_user.id
 
-    if not inline_msg_id and not (chat_id and message_id):
-        logger.error("❌ auto_scan_task_live dibatalkan: Target pesan tidak ditemukan.")
+    if uid in BANNED_USERS:
         return
 
-    if not clients:
-        await safe_edit_text("❌ Tidak ada acc aktif untuk scan.")
+    save_user(uid)
+
+    if not query:
+        results = [
+            InlineQueryResultArticle(
+                id="help",
+                title="misal",
+                description="anjay, uncommon anjay, tamping anjay, ganhur anjay, dll",
+                input_message_content=InputTextMessageContent(
+                    "Contoh penggunaan:\n"
+                    " @sunless2bot adnan"
+                )
+            )
+        ]
+        await update.inline_query.answer(results, cache_time=1)
         return
 
-    try:
+    parts = query.split(maxsplit=1)
+    
+    if parts[0].lower() in GENERATORS and len(parts) > 1:
+        mode_key = parts[0].lower()
+        base = parts[1].replace("@", "")
+        mode_label = GENERATORS[mode_key][1]
+    else:
+        mode_key = "tamhur"
+        base = query.replace("@", "")
+        mode_label = "Tamhur"
+
+    loading_text = f"Klik tombol di bawah untuk mulai scan @{base} ({mode_label})..."
+
+    # Tombol interaktif pemicu khusus Channel & Grup
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🚀 Mulai Scan", callback_data=f"runlive_{mode_key}_{base}")
+    ]])
+
+    results = [
+        InlineQueryResultArticle(
+            id=f"scan_{mode_key}_{base}_{int(time.time())}",
+            title=f"Scan @{base} ({mode_label})",
+            description=f"Langsung scan variasi username @{base}",
+            input_message_content=InputTextMessageContent(loading_text),
+            reply_markup=keyboard
+        )
+    ]
+    
+    await update.inline_query.answer(results, cache_time=1)
+
+# ================== CALLBACK QUERY HANDLER (LIVE SCAN & PAGINATION) ==================
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    inline_msg_id = query.inline_message_id
+
+    # 1. Trigger Mulai Scan di Channel / Grup
+    if data.startswith("runlive_"):
+        _, mode_key, base = data.split("_", 2)
+        await query.answer("🚀 Memulai scan...")
+
+        if not clients:
+            await context.bot.edit_message_text(
+                inline_message_id=inline_msg_id,
+                text="❌ Tidak ada acc aktif untuk scan."
+            )
+            return
+
         gen_func, lbl = GENERATORS.get(mode_key, (gen_tamhur, "Tamhur"))
         raw_res = gen_func(base)
         if mode_key == "uncommon":
@@ -219,7 +254,13 @@ async def auto_scan_task_live(
                                     "\n".join(found_avail[:15]) +
                                     ("\n..." if len(found_avail) > 15 else "")
                                 )
-                                await safe_edit_text(live_text)
+                                try:
+                                    await context.bot.edit_message_text(
+                                        inline_message_id=inline_msg_id,
+                                        text=live_text
+                                    )
+                                meexcept Exception:
+                                    pass
                             return res_str
                         return None
                     except (asyncio.TimeoutError, FloodWaitError) as e:
@@ -232,16 +273,19 @@ async def auto_scan_task_live(
                         return None
                 return None
 
+        # Jalankan pindaian paralel
         await asyncio.gather(*(worker(u) for u in candidates))
 
         if not found_avail:
-            await safe_edit_text(f"❌ Gak ada atau gak akun gua limit jadi gak nemu untuk @{base}.")
+            await context.bot.edit_message_text(
+                inline_message_id=inline_msg_id,
+                text=f"❌ Gak ada atau gak akun gua limit jadi gak nemu untuk @{base}."
+            )
             return
 
         pages = chunk_results(found_avail, chunk_size=15)
         
-        cache_key = inline_msg_id if inline_msg_id else f"{chat_id}_{message_id}"
-        SCAN_CACHE[cache_key] = {
+        SCAN_CACHE[inline_msg_id] = {
             "pages": pages,
             "mode_label": lbl,
             "base": base,
@@ -255,91 +299,15 @@ async def auto_scan_task_live(
         )
         
         reply_markup = build_pagination_keyboard(0, len(pages), base, mode_key)
-        await safe_edit_text(page_text, reply_markup=reply_markup)
 
-    except Exception as e:
-        logger.error(f"❌ Error fatal saat scan: {e}", exc_info=True)
-        await safe_edit_text(f"❌ Terjadi Error: {e}")
-
-
-# ================== CHOSEN INLINE RESULT ==================
-async def chosen_inline_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chosen = update.chosen_inline_result
-    inline_msg_id = chosen.inline_message_id
-    result_id = chosen.result_id
-
-    parts = result_id.split("_")
-    if len(parts) >= 3:
-        mode_key = parts[1]
-        base = parts[2]
-
-        if inline_msg_id:
-            # Jika dijalankan di Grup / PM Pengguna Lain
-            asyncio.create_task(
-                auto_scan_task_live(context, inline_msg_id=inline_msg_id, mode_key=mode_key, base=base)
-            )
-        elif update.effective_user:
-            # Jika dites di PM Bot Sendiri
-            logger.info("ℹ️ Inline dipanggil di PM bot tanpa inline_message_id.")
-
-# ================== INLINE HANDLER ==================
-async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.inline_query.query.strip()
-    uid = update.inline_query.from_user.id
-
-    if uid in BANNED_USERS:
-        return
-
-    save_user(uid)
-
-    if not query:
-        results = [
-            InlineQueryResultArticle(
-                id="help",
-                title="misal",
-                description="anjay, uncommon anjay, tamping anjay, ganhur anjay, dll",
-                input_message_content=InputTextMessageContent(
-                    "Contoh penggunaan:\n"
-                    " @sunless2bot adnan"
-                )
-            )
-        ]
-        await update.inline_query.answer(results, cache_time=1)
-        return
-
-    parts = query.split(maxsplit=1)
-    
-    if parts[0].lower() in GENERATORS and len(parts) > 1:
-        mode_key = parts[0].lower()
-        base = parts[1].replace("@", "")
-        mode_label = GENERATORS[mode_key][1]
-    else:
-        mode_key = "tamhur"
-        base = query.replace("@", "")
-        mode_label = "Tamhur"
-
-    loading_text = (
-        f"Sedang mencari @{base} ({mode_label})..."  
-    )
-
-    results = [
-        InlineQueryResultArticle(
-            id=f"scan_{mode_key}_{base}_{int(time.time())}",
-            title=f"Scan @{base} ({mode_label})",
-            description=f"Langsung scan variasi username @{base}",
-            input_message_content=InputTextMessageContent(loading_text)
+        await context.bot.edit_message_text(
+            inline_message_id=inline_msg_id,
+            text=page_text,
+            reply_markup=reply_markup
         )
-    ]
-    
-    await update.inline_query.answer(results, cache_time=1)
 
-# ================== CALLBACK QUERY HANDLER (PAGINATION) ==================
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    data = query.data
-    inline_msg_id = query.inline_message_id
-
-    if data.startswith("page_"):
+    # 2. Handler Pindah Halaman (1, 2, 3...)
+    elif data.startswith("page_"):
         _, mode_key, base, page_idx = data.split("_", 3)
         page_idx = int(page_idx)
 
@@ -398,7 +366,6 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(InlineQueryHandler(inline_query))
     app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(ChosenInlineResultHandler(chosen_inline_result))
 
     logger.info("🚀 Bot berjalan...")
     app.run_polling(drop_pending_updates=True)
