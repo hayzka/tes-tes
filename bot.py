@@ -141,9 +141,7 @@ def build_pagination_keyboard(current_page, total_pages, target_base, mode_key):
     return InlineKeyboardMarkup([buttons])
 
 # Task Async yang Menjalankan Scan LIVE Real-Time
-# Task Async yang Menjalankan Scan LIVE Real-Time (Dengan Penanganan Safety Check)
 async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id: str, mode_key: str, base: str):
-    # Validasi utama: Pastikan inline_message_id tidak None/kosong
     if not inline_msg_id:
         logger.error("❌ auto_scan_task_live dibatalkan: inline_message_id kosong.")
         return
@@ -152,7 +150,7 @@ async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id:
         try:
             await context.bot.edit_message_text(
                 inline_message_id=inline_msg_id,
-                text="❌ ERROR: Tidak ada akun Telethon aktif/ready."
+                text="❌ Tidak ada acc aktif untuk scan."
             )
         except Exception as err:
             logger.error(f"Gagal kirim pesan error akun: {err}")
@@ -185,7 +183,6 @@ async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id:
                             found_avail.append(res_str)
 
                             now = time.time()
-                            # Jeda minimal 2.5 detik antar edit agar tidak kena FloodControl Telegram
                             if now - last_update_time > 2.5:
                                 last_update_time = now
                                 live_text = (
@@ -210,21 +207,18 @@ async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id:
                         return None
                 return None
 
-        # Jalankan pemeriksaan kandidat paralel
         await asyncio.gather(*(worker(u) for u in candidates))
 
-        # Jika selesai dan tidak ada yang ketemu
         if not found_avail:
             try:
                 await context.bot.edit_message_text(
                     inline_message_id=inline_msg_id,
-                    text=f"❌ Gak ada username yang ketemu atau semua akun sedang limit untuk @{base}."
+                    text=f"❌ Gak ada atau gak akun gua limit jadi gak nemu untuk @{base}."
                 )
             except Exception as e:
-                logger.error(f"Gagal edit pesan 'gak ketemu': {e}")
+                logger.error(f"Gagal edit pesan 'gak nemu': {e}")
             return
 
-        # Pecah hasil akhir ke beberapa halaman (Pagination)
         pages = chunk_results(found_avail, chunk_size=15)
         
         SCAN_CACHE[inline_msg_id] = {
@@ -235,14 +229,13 @@ async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id:
         }
 
         page_text = (
-            f"hasil scan untuk @{base} ({lbl})"
+            f"hasil scan untuk @{base} ({lbl})\n"
             f"ada {len(found_avail)} usn\n\n" + 
             "\n".join(pages[0])
         )
         
         reply_markup = build_pagination_keyboard(0, len(pages), base, mode_key)
 
-        # Update tampilan hasil akhir secara penuh
         try:
             await context.bot.edit_message_text(
                 inline_message_id=inline_msg_id,
@@ -262,14 +255,12 @@ async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id:
         except Exception:
             pass
 
-
 # ================== CHOSEN INLINE RESULT ==================
 async def chosen_inline_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chosen = update.chosen_inline_result
     inline_msg_id = chosen.inline_message_id
     result_id = chosen.result_id
 
-    # Pastikan inline_message_id benar-benar ada dari update Telegram
     if not inline_msg_id:
         logger.warning("⚠️ ChosenInlineResult diterima tanpa inline_message_id!")
         return
@@ -279,7 +270,6 @@ async def chosen_inline_result(update: Update, context: ContextTypes.DEFAULT_TYP
         mode_key = parts[1]
         base = parts[2]
         
-        # Jalankan task live background dengan inline_msg_id yang terverifikasi
         asyncio.create_task(auto_scan_task_live(context, inline_msg_id, mode_key, base))
 
 # ================== INLINE HANDLER ==================
@@ -332,20 +322,6 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     
     await update.inline_query.answer(results, cache_time=1)
-
-# ================== CHOSEN INLINE RESULT ==================
-async def chosen_inline_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chosen = update.chosen_inline_result
-    inline_msg_id = chosen.inline_message_id
-    result_id = chosen.result_id
-
-    parts = result_id.split("_")
-    if len(parts) >= 3:
-        mode_key = parts[1]
-        base = parts[2]
-        
-        # Jalankan task live background
-        asyncio.create_task(auto_scan_task_live(context, inline_msg_id, mode_key, base))
 
 # ================== CALLBACK QUERY HANDLER (PAGINATION) ==================
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
