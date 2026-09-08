@@ -23,7 +23,7 @@ from telegram import (
 )
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, 
-    InlineQueryHandler, CallbackQueryHandler, ContextTypes
+    InlineQueryHandler, CallbackQueryHandler, ChosenInlineResultHandler, ContextTypes
 )
 
 # Configuration from Environment Variables
@@ -42,7 +42,7 @@ client_cooldown = {}
 client_index = 0
 ALL_USERS = set()
 
-# Cache sementara untuk menyimpan hasil scan per pesan inline untuk navigasi halaman
+# Cache sementara hasil scan per inline message id
 SCAN_CACHE = {}
 
 # ================== PERSISTENCE ==================
@@ -111,7 +111,7 @@ async def init_clients():
             if await c.is_user_authorized():
                 clients.append(c)
                 client_cooldown[c] = 0
-                logger.info(f"✅ acc{i} ready")
+                logger.info(f"✅ acc{i} Ready")
             else: 
                 await c.disconnect()
         except Exception: 
@@ -125,34 +125,6 @@ def get_available_client():
     client = available[client_index % len(available)]
     client_index += 1
     return client
-
-async def check_usernames_fast(usernames):
-    if not usernames or not clients:
-        return []
-    
-    sem = asyncio.Semaphore(len(clients) * 3)
-    
-    async def worker(u):
-        async with sem:
-            for _ in range(2):
-                c = get_available_client()
-                if not c:
-                    await asyncio.sleep(0.1)
-                    continue
-                try:
-                    ok = await c(functions.account.CheckUsernameRequest(u))
-                    await asyncio.sleep(0.15)
-                    if ok: return f"🟢 @{u}"
-                    return None
-                except FloodWaitError as e:
-                    client_cooldown[c] = time.time() + e.seconds
-                    continue
-                except Exception:
-                    return None
-            return None
-
-    results = await asyncio.gather(*(worker(u) for u in usernames))
-    return [r for r in results if r]
 
 def chunk_results(items, chunk_size=15):
     return [items[i:i + chunk_size] for i in range(0, len(items), chunk_size)]
@@ -168,15 +140,12 @@ def build_pagination_keyboard(current_page, total_pages, target_base, mode_key):
     
     return InlineKeyboardMarkup([buttons])
 
-# Task Async untuk Jalankan Scan Otomatis Begitu Pesan Inline Diklik
-async def auto_scan_task(context: ContextTypes.DEFAULT_TYPE, inline_msg_id: str, mode_key: str, base: str):
-    await asyncio.sleep(0.5) # Delay sebentar agar pesan terkirim sempurna
-    
+# Task Async yang Menjalankan Scan LIVE Real-Time
+async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id: str, mode_key: str, base: str):
     if not clients:
         await context.bot.edit_message_text(
             inline_message_id=inline_msg_id,
-            text="❌ error: akun gua limit",
-            parse_mode="HTML"
+            text="❌ error: limit akun gua"
         )
         return
 
@@ -187,17 +156,64 @@ async def auto_scan_task(context: ContextTypes.DEFAULT_TYPE, inline_msg_id: str,
             raw_res += gen_canon(base)
 
         candidates = list(set(raw_res))[:150]
-        avail = await check_usernames_fast(candidates)
+        found_avail = []
+        last_update_time = time.time()
+        sem = asyncio.Semaphore(len(clients) * 3)
 
-        if not avail:
+        async def worker(u):
+            nonlocal last_update_time
+            async with sem:
+                for _ in range(2):
+                    c = get_available_client()
+                    if not c:
+                        await asyncio.sleep(0.1)
+                        continue
+                    try:
+                        ok = await c(functions.account.CheckUsernameRequest(u))
+                        await asyncio.sleep(0.15)
+                        if ok:
+                            res_str = f"🟢 @{u}"
+                            found_avail.append(res_str)
+
+                            # Update teks secara live di Telegram tiap ada penambahan (jeda min 1.5 detik agar tak kena rate limit)
+                            now = time.time()
+                            if now - last_update_time > 1.5:
+                                last_update_time = now
+                                live_text = (
+                                    f"scanning @{base} ({lbl})\n"
+                                    f"ada: {len(found_avail)}\n\n" +
+                                    "\n".join(found_avail[:15]) +
+                                    ("\n..." if len(found_avail) > 15 else "")
+                                )
+                                try:
+                                    await context.bot.edit_message_text(
+                                        inline_message_id=inline_msg_id,
+                                        text=live_text
+                                    )
+                                except Exception:
+                                    pass
+                            return res_str
+                        return None
+                    except FloodWaitError as e:
+                        client_cooldown[c] = time.time() + e.seconds
+                        continue
+                    except Exception:
+                        return None
+                return None
+
+        # Jalankan pemeriksaan kandidat
+        await asyncio.gather(*(worker(u) for u in candidates))
+
+        # Jika selesai dan tidak ada yang ketemu
+        if not found_avail:
             await context.bot.edit_message_text(
                 inline_message_id=inline_msg_id,
-                text=f"❌ Gak ada atau akun gua limit jadi gak nemu",
-                parse_mode="HTML"
+                text=f"❌ Gak ada username yang ketemu atau semua akun sedang limit untuk @{base}."
             )
             return
 
-        pages = chunk_results(avail, chunk_size=15)
+        # Pecah hasil akhir ke beberapa halaman (Pagination)
+        pages = chunk_results(found_avail, chunk_size=15)
         
         SCAN_CACHE[inline_msg_id] = {
             "pages": pages,
@@ -207,8 +223,7 @@ async def auto_scan_task(context: ContextTypes.DEFAULT_TYPE, inline_msg_id: str,
         }
 
         page_text = (
-            f"hasil scan untuk @{base} ({lbl}) "
-            f"ada {len(avail)} usn\n\n" + 
+            f"hasil scan untuk @{base} ({lbl}) ada {len(found_avail)} usn\n\n" + 
             "\n".join(pages[0])
         )
         
@@ -217,16 +232,14 @@ async def auto_scan_task(context: ContextTypes.DEFAULT_TYPE, inline_msg_id: str,
         await context.bot.edit_message_text(
             inline_message_id=inline_msg_id,
             text=page_text,
-            parse_mode="HTML",
             reply_markup=reply_markup
         )
 
     except Exception as e:
-        logger.error(f"Error scan: {e}", exc_info=True)
+        logger.error(f"❌ Error saat scan: {e}", exc_info=True)
         await context.bot.edit_message_text(
             inline_message_id=inline_msg_id,
-            text=f"❌ Error:</b> <code>{e}</code>",
-            parse_mode="HTML"
+            text=f"❌ Terjadi Error: {e}"
         )
 
 # ================== INLINE HANDLER ==================
@@ -244,10 +257,10 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineQueryResultArticle(
                 id="help",
                 title="misal",
-                description="anjay, tamping anjay, tamhur anjay, uncommon anjay, ganhur anjay, dll",
+                description="anjay, uncommon anjay, tamping anjay, ganhur anjay, dll",
                 input_message_content=InputTextMessageContent(
                     "Contoh penggunaan:\n"
-                    " `@sunless2bot adnan` (buat tamhur)\n"
+                    " @sunless2bot adnan"
                 )
             )
         ]
@@ -265,45 +278,34 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         base = query.replace("@", "")
         mode_label = "Tamhur"
 
-    # ID Unik untuk pesan inline
-    inline_msg_id_placeholder = f"scan_{base}_{int(time.time() * 1000)}"
-
-    # Pesan Awal (Langsung muncul saat diklik di inline chat)
     loading_text = (
-        "bntr lagi nyari"
+        f"Sedang mencari @{base} ({mode_label})..."  
     )
 
     results = [
         InlineQueryResultArticle(
-            id=inline_msg_id_placeholder,
+            id=f"scan_{mode_key}_{base}_{int(time.time())}",
             title=f"Scan @{base} ({mode_label})",
-            description=f"Langsung scan usn @{base}",
-            input_message_content=InputTextMessageContent(loading_text, parse_mode="HTML")
+            description=f"Langsung scan variasi username @{base}",
+            input_message_content=InputTextMessageContent(loading_text)
         )
     ]
     
     await update.inline_query.answer(results, cache_time=1)
 
-# ================== CHOSEN INLINE RESULT (TRIGGER SCAN AUTOMATICALLY) ==================
+# ================== CHOSEN INLINE RESULT ==================
 async def chosen_inline_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chosen = update.chosen_inline_result
     inline_msg_id = chosen.inline_message_id
     result_id = chosen.result_id
 
-    # Format result_id: scan_base_timestamp
     parts = result_id.split("_")
-    if len(parts) >= 2:
-        base = parts[1]
+    if len(parts) >= 3:
+        mode_key = parts[1]
+        base = parts[2]
         
-        # Mengecek query asal dari user
-        query_text = chosen.query.strip().split(maxsplit=1)
-        if query_text[0].lower() in GENERATORS and len(query_text) > 1:
-            mode_key = query_text[0].lower()
-        else:
-            mode_key = "tamhur"
-
-        # Jalankan task scan otomatis di background
-        asyncio.create_task(auto_scan_task(context, inline_msg_id, mode_key, base))
+        # Jalankan task live background
+        asyncio.create_task(auto_scan_task_live(context, inline_msg_id, mode_key, base))
 
 # ================== CALLBACK QUERY HANDLER (PAGINATION) ==================
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -311,13 +313,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     inline_msg_id = query.inline_message_id
 
-    # Handler Pindah Halaman (Tombol 1, 2, 3...)
     if data.startswith("page_"):
         _, mode_key, base, page_idx = data.split("_", 3)
         page_idx = int(page_idx)
 
         if inline_msg_id not in SCAN_CACHE:
-            await query.answer("⚠️ Hasil scan ini sudah kadaluarsa. Silakan lakukan scan baru.", show_alert=True)
+            await query.answer("⚠️ Session scan ini sudah kadaluarsa. Silakan scan ulang.", show_alert=True)
             return
 
         cache_data = SCAN_CACHE[inline_msg_id]
@@ -329,8 +330,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         page_text = (
-            f"hasil scan buat @{base} ({lbl}) - {page_idx + 1}/{len(pages)}\n"
-            f"ada {sum(len(p) for p in pages)} usn\n\n" + 
+            f" hasil scan @{base} ({lbl}) - Halaman {page_idx + 1}/{len(pages)}\n"
+            f"Total ditemukan: {sum(len(p) for p in pages)} usn\n\n" + 
             "\n".join(pages[page_idx])
         )
 
@@ -340,7 +341,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.edit_message_text(
                 inline_message_id=inline_msg_id,
                 text=page_text,
-                parse_mode="HTML",
                 reply_markup=reply_markup
             )
             await query.answer(f"Halaman {page_idx + 1}")
@@ -352,7 +352,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id in BANNED_USERS: return
     save_user(user.id)
-    await update.message.reply_text("p anjay")
+    await update.message.reply_text("Punya @rsunless")
 
 async def post_init(application):
     logger.info("⚙️ Inisialisasi Telethon sessions...")
@@ -372,9 +372,6 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(InlineQueryHandler(inline_query))
     app.add_handler(CallbackQueryHandler(handle_callback))
-    
-    # Handler bawaan telegram-bot untuk mendeteksi kapan pesan inline berhasil diklik
-    from telegram.ext import ChosenInlineResultHandler
     app.add_handler(ChosenInlineResultHandler(chosen_inline_result))
 
     logger.info("🚀 Bot berjalan...")
