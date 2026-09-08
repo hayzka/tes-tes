@@ -91,15 +91,15 @@ def gen_tidakrata(b): return list({b[:i] + l + b[i:] for i in range(len(b)+1) fo
 def gen_vokal(b): return list({b[:i] + l + b[i:] for i in range(len(b)+1) for l in vokal})
 
 GENERATORS = {
-    "switch": (gen_switch, "Switch"),
-    "tamping": (gen_tamping, "Tamping"),
-    "tamhur": (gen_tamhur, "Tamhur"),
-    "ganhur": (gen_ganhur, "Ganhur"),
-    "uncommon": (gen_uncommon, "Uncommon"),
-    "kurhur": (gen_kurhur, "Kurhur"),
-    "rata": (gen_rata, "Rata"),
-    "tidakrata": (gen_tidakrata, "Tidak Rata"),
-    "vokal": (gen_vokal, "Vokal"),
+    "switch": (gen_switch, "switch"),
+    "tamping": (gen_tamping, "tamping"),
+    "tamhur": (gen_tamhur, "tamhur"),
+    "ganhur": (gen_ganhur, "ganhur"),
+    "uncommon": (gen_uncommon, "uncommon"),
+    "kurhur": (gen_kurhur, "kurhur"),
+    "rata": (gen_rata, "rata"),
+    "tidakrata": (gen_tidakrata, "tidak rata"),
+    "vokal": (gen_vokal, "vokal"),
 }
 
 # ================== CORE LOGIC ==================
@@ -178,13 +178,13 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         mode_key = "tamhur"
         base = query.replace("@", "")
-        mode_label = "Tamhur"
+        mode_label = "tamhur"
 
     loading_text = f"Klik tombol di bawah untuk mulai scan @{base} ({mode_label})..."
 
     # Tombol interaktif pemicu khusus Channel & Grup
     keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🚀 Mulai Scan", callback_data=f"runlive_{mode_key}_{base}")
+        InlineKeyboardButton("Mulai Scan", callback_data=f"runlive_{mode_key}_{base}")
     ]])
 
     results = [
@@ -208,12 +208,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 1. Trigger Mulai Scan di Channel / Grup
     if data.startswith("runlive_"):
         _, mode_key, base = data.split("_", 2)
-        await query.answer("🚀 Memulai scan...")
+        await query.answer("Memulai scan...")
 
         if not clients:
             await context.bot.edit_message_text(
                 inline_message_id=inline_msg_id,
-                text="❌ Tidak ada acc aktif untuk scan."
+                text="❌ acc gua limit"
             )
             return
 
@@ -279,7 +279,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not found_avail:
             await context.bot.edit_message_text(
                 inline_message_id=inline_msg_id,
-                text=f"❌ Gak ada atau gak akun gua limit jadi gak nemu untuk @{base}."
+                text=f"❌ Gak ada atau gak akun gua limit jadi gak nemu"
             )
             return
 
@@ -293,7 +293,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
 
         page_text = (
-            f"hasil scan untuk @{base} ({lbl})\n"
+            f"hasil scan untuk @{base} ({lbl})"
             f"ada {len(found_avail)} usn\n\n" + 
             "\n".join(pages[0])
         )
