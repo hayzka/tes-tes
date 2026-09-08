@@ -160,6 +160,7 @@ async def check_usernames_fast(usernames):
     return [r for r in results if r]
 
 # ================== INLINE HANDLER ==================
+# ================== INLINE HANDLER ==================
 async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.inline_query.query.strip()
     uid = update.inline_query.from_user.id
@@ -177,8 +178,9 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 description="Ketik: @botusername <username_dasar>",
                 input_message_content=InputTextMessageContent(
                     "Contoh penggunaan:\n"
-                    "• `@botusername anya` (Scan Semua Tipe)\n"
-                    "• `@botusername switch anya` (Scan Mode Spesifik)"
+                    "• `@botusername anya` (Scan Tamhur Fast - 150 Kandidat)\n"
+                    "• `@botusername switch anya` (Scan Spesifik Switch)\n"
+                    "• `@botusername tamping anya` (Scan Spesifik Tamping)"
                 )
             )
         ]
@@ -186,6 +188,57 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     parts = query.split(maxsplit=1)
+    
+    # 1. Pengecekan Mode Spesifik (misal: @bot switch anya / @bot tamping anya)
+    if parts[0].lower() in GENERATORS and len(parts) > 1:
+        mode_key = parts[0].lower()
+        target_generators = {mode_key: GENERATORS[mode_key]}
+        base = parts[1].replace("@", "")
+        LIMIT_CANDIDATES = 150
+        scan_title = f"Scan Spesifik {GENERATORS[mode_key][1]}"
+
+    # 2. Mode Direct / Langsung (misal: @bot anya) -> KHUSUS TAMHUR
+    else:
+        target_generators = {"tamhur": GENERATORS["tamhur"]}
+        base = query.replace("@", "")
+        LIMIT_CANDIDATES = 150  # Limit tinggi karena fokus ke 1 metode
+        scan_title = "Scan Tamhur (Fast Direct)"
+
+    if not clients:
+        text_res = "❌ Tidak ada account Telethon aktif untuk scan."
+    else:
+        sections = []
+        
+        for key, (gen_func, lbl) in target_generators.items():
+            raw_res = gen_func(base)
+            if key == "uncommon":
+                raw_res += gen_canon(base)
+            
+            # Mengambil hingga 150 kandidat
+            candidates = list(set(raw_res))[:LIMIT_CANDIDATES]
+            avail = await check_usernames_fast(candidates)
+            
+            if avail:
+                sections.append(f"<b>{lbl.upper()} ({len(avail)}):</b>\n" + "\n".join(avail))
+
+        if sections:
+            text_res = f"🔍 <b>HASIL SCAN UNTUK @{base}</b>\n\n" + "\n\n".join(sections)
+        else:
+            text_res = f"❌ Tidak ada username yang tersedia untuk <b>@{base}</b> dari {LIMIT_CANDIDATES} kandidat yang diperiksa."
+
+    # Potong pesan jika melebihi batas karakter Telegram (4096)
+    if len(text_res) > 4000:
+        text_res = text_res[:3900] + "\n\n⚠️ <i>Hasil dipotong karena melebihi batas panjang pesan Telegram.</i>"
+
+    results = [
+        InlineQueryResultArticle(
+            id=f"scan_{base}_{int(time.time())}",
+            title=f"{scan_title} untuk @{base}",
+            description=f"Memeriksa hingga {LIMIT_CANDIDATES} variasi username",
+            input_message_content=InputTextMessageContent(text_res, parse_mode="HTML")
+        )
+    ]
+    await update.inline_query.answer(results, cache_time=1)
     
     # Pengaturan Mode Spesifik vs Mode All-in-One
     if parts[0].lower() in GENERATORS and len(parts) > 1:
