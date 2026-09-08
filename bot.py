@@ -6,8 +6,12 @@ import asyncio
 
 # Setup logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# Sembunyikan log internal MTProtoSender Telethon
+logging.getLogger("telethon.network.mtprotosender").setLevel(logging.WARNING)
+logging.getLogger("telethon.network.telegrambarebodysender").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
+# Sembunyikan log internal MTProtoSender Telethon
 # Load dotenv jika dijalankan secara lokal
 try:
     from dotenv import load_dotenv
@@ -141,19 +145,40 @@ def build_pagination_keyboard(current_page, total_pages, target_base, mode_key):
     return InlineKeyboardMarkup([buttons])
 
 # Task Async yang Menjalankan Scan LIVE Real-Time
-async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id: str, mode_key: str, base: str):
-    if not inline_msg_id:
-        logger.error("❌ auto_scan_task_live dibatalkan: inline_message_id kosong.")
+# Task Async Universal (Bisa pakai inline_msg_id ATAU chat_id + message_id)
+async def auto_scan_task_live(
+    context: ContextTypes.DEFAULT_TYPE, 
+    inline_msg_id: str = None, 
+    chat_id: int = None, 
+    message_id: int = None, 
+    mode_key: str = "tamhur", 
+    base: str = ""
+):
+    # Helper untuk edit pesan universal
+    async def safe_edit_text(text: str, reply_markup=None):
+        try:
+            if inline_msg_id:
+                await context.bot.edit_message_text(
+                    inline_message_id=inline_msg_id,
+                    text=text,
+                    reply_markup=reply_markup
+                )
+            elif chat_id and message_id:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=text,
+                    reply_markup=reply_markup
+                )
+        except Exception:
+            pass
+
+    if not inline_msg_id and not (chat_id and message_id):
+        logger.error("❌ auto_scan_task_live dibatalkan: Target pesan tidak ditemukan.")
         return
 
     if not clients:
-        try:
-            await context.bot.edit_message_text(
-                inline_message_id=inline_msg_id,
-                text="❌ Tidak ada acc aktif untuk scan."
-            )
-        except Exception as err:
-            logger.error(f"Gagal kirim pesan error akun: {err}")
+        await safe_edit_text("❌ Tidak ada acc aktif untuk scan.")
         return
 
     try:
@@ -176,7 +201,10 @@ async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id:
                         await asyncio.sleep(0.1)
                         continue
                     try:
-                        ok = await c(functions.account.CheckUsernameRequest(u))
+                        ok = await asyncio.wait_for(
+                            c(functions.account.CheckUsernameRequest(u)), 
+                            timeout=3.0
+                        )
                         await asyncio.sleep(0.15)
                         if ok:
                             res_str = f"🟢 @{u}"
@@ -191,17 +219,14 @@ async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id:
                                     "\n".join(found_avail[:15]) +
                                     ("\n..." if len(found_avail) > 15 else "")
                                 )
-                                try:
-                                    await context.bot.edit_message_text(
-                                        inline_message_id=inline_msg_id,
-                                        text=live_text
-                                    )
-                                except Exception:
-                                    pass
+                                await safe_edit_text(live_text)
                             return res_str
                         return None
-                    except FloodWaitError as e:
-                        client_cooldown[c] = time.time() + e.seconds
+                    except (asyncio.TimeoutError, FloodWaitError) as e:
+                        if isinstance(e, FloodWaitError):
+                            client_cooldown[c] = time.time() + e.seconds
+                        else:
+                            client_cooldown[c] = time.time() + 5
                         continue
                     except Exception:
                         return None
@@ -210,18 +235,13 @@ async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id:
         await asyncio.gather(*(worker(u) for u in candidates))
 
         if not found_avail:
-            try:
-                await context.bot.edit_message_text(
-                    inline_message_id=inline_msg_id,
-                    text=f"❌ Gak ada atau gak akun gua limit jadi gak nemu untuk @{base}."
-                )
-            except Exception as e:
-                logger.error(f"Gagal edit pesan 'gak nemu': {e}")
+            await safe_edit_text(f"❌ Gak ada atau gak akun gua limit jadi gak nemu untuk @{base}.")
             return
 
         pages = chunk_results(found_avail, chunk_size=15)
         
-        SCAN_CACHE[inline_msg_id] = {
+        cache_key = inline_msg_id if inline_msg_id else f"{chat_id}_{message_id}"
+        SCAN_CACHE[cache_key] = {
             "pages": pages,
             "mode_label": lbl,
             "base": base,
@@ -235,25 +255,12 @@ async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id:
         )
         
         reply_markup = build_pagination_keyboard(0, len(pages), base, mode_key)
-
-        try:
-            await context.bot.edit_message_text(
-                inline_message_id=inline_msg_id,
-                text=page_text,
-                reply_markup=reply_markup
-            )
-        except Exception as final_err:
-            logger.error(f"Gagal update hasil akhir: {final_err}")
+        await safe_edit_text(page_text, reply_markup=reply_markup)
 
     except Exception as e:
         logger.error(f"❌ Error fatal saat scan: {e}", exc_info=True)
-        try:
-            await context.bot.edit_message_text(
-                inline_message_id=inline_msg_id,
-                text=f"❌ Terjadi Error: {e}"
-            )
-        except Exception:
-            pass
+        await safe_edit_text(f"❌ Terjadi Error: {e}")
+
 
 # ================== CHOSEN INLINE RESULT ==================
 async def chosen_inline_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -261,16 +268,19 @@ async def chosen_inline_result(update: Update, context: ContextTypes.DEFAULT_TYP
     inline_msg_id = chosen.inline_message_id
     result_id = chosen.result_id
 
-    if not inline_msg_id:
-        logger.warning("⚠️ ChosenInlineResult diterima tanpa inline_message_id!")
-        return
-
     parts = result_id.split("_")
     if len(parts) >= 3:
         mode_key = parts[1]
         base = parts[2]
-        
-        asyncio.create_task(auto_scan_task_live(context, inline_msg_id, mode_key, base))
+
+        if inline_msg_id:
+            # Jika dijalankan di Grup / PM Pengguna Lain
+            asyncio.create_task(
+                auto_scan_task_live(context, inline_msg_id=inline_msg_id, mode_key=mode_key, base=base)
+            )
+        elif update.effective_user:
+            # Jika dites di PM Bot Sendiri
+            logger.info("ℹ️ Inline dipanggil di PM bot tanpa inline_message_id.")
 
 # ================== INLINE HANDLER ==================
 async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
