@@ -175,12 +175,12 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineQueryResultArticle(
                 id="help",
                 title="misal",
-                description="Adnan, tamping adnan, uncommon adnan, tamdal adnan, rata adnan, ganhur adnan, dll",
+                description="Anjay, tamping anjay, uncommon anjay, tamdal anjay, rata anjay, ganhur anjay, dll",
                 input_message_content=InputTextMessageContent(
                     "Contoh penggunaan:\n"
-                    "Adnan (Scan tamhur)\n"
-                    "tamping Adnan` (Scan tamping)\n"
-                    "tamdal Adnan (Scan tamdal)\n"
+                    "anjay (scan tamhur)\n"
+                    "tamping anjay (Scan tamping)\n"
+                    "tamdal anjay (Scan tamdal)\n"
                     "dkk"
                 )
             )
@@ -281,7 +281,7 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     results = [
         InlineQueryResultArticle(
             id=f"scan_{base}_{int(time.time())}",
-            title=f"Scan Multi-Kandidat untuk @{base}",
+            title=f"Scan @{base}",
             description=f"Memeriksa puluhan hingga ratusan variasi username untuk @{base}",
             input_message_content=InputTextMessageContent(text_res, parse_mode="HTML")
         )
