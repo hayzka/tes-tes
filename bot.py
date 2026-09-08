@@ -2,7 +2,6 @@ import os
 import string
 import time
 import logging
-import re
 import asyncio
 
 # Setup logging
@@ -23,8 +22,8 @@ from telegram import (
     InlineKeyboardMarkup, InlineKeyboardButton
 )
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler, 
-    InlineQueryHandler, CallbackQueryHandler, ContextTypes, filters
+    ApplicationBuilder, CommandHandler, 
+    InlineQueryHandler, CallbackQueryHandler, ContextTypes
 )
 
 # Configuration from Environment Variables
@@ -40,12 +39,10 @@ USER_FILE = f"{DATA_DIR}users.txt"
 BANNED_USERS = set()
 clients = []
 client_cooldown = {}
-running_tasks = {}
 client_index = 0
 ALL_USERS = set()
 
-# Temporary Cache untuk Menyimpan Hasil Scan per Message ID untuk Pagination
-# Format: { inline_message_id: { "pages": [str_page1, str_page2, ...], "current_page": 0, "base": str } }
+# Cache sementara untuk menyimpan hasil scan per pesan inline untuk navigasi halaman
 SCAN_CACHE = {}
 
 # ================== PERSISTENCE ==================
@@ -66,11 +63,6 @@ def load_bans():
         with open(BAN_FILE, "r") as f:
             for line in f:
                 if line.strip(): BANNED_USERS.add(int(line.strip()))
-
-def save_ban(user_id):
-    BANNED_USERS.add(user_id)
-    with open(BAN_FILE, "a") as f:
-        f.write(f"{user_id}\n")
 
 # ================== GENERATORS ==================
 rata, tdk_rata, vokal = "asweruiozxcvnm", "qtypdfghjklb", "aeiou"
@@ -119,10 +111,10 @@ async def init_clients():
             if await c.is_user_authorized():
                 clients.append(c)
                 client_cooldown[c] = 0
-                logger.info(f"✅ acc{i} Ready")
+                logger.info(f"✅ acc{i} ready")
             else: 
                 await c.disconnect()
-        except Exception as e: 
+        except Exception: 
             pass
 
 def get_available_client():
@@ -162,7 +154,6 @@ async def check_usernames_fast(usernames):
     results = await asyncio.gather(*(worker(u) for u in usernames))
     return [r for r in results if r]
 
-# Helper Function untuk Membagi List Hasil Menjadi Beberapa Halaman (Pagination)
 def chunk_results(items, chunk_size=15):
     return [items[i:i + chunk_size] for i in range(0, len(items), chunk_size)]
 
@@ -173,12 +164,72 @@ def build_pagination_keyboard(current_page, total_pages, target_base, mode_key):
     buttons = []
     for i in range(total_pages):
         label = f"• {i+1} •" if i == current_page else f"{i+1}"
-        # Callback data format: page_mode_base_pageIndex
         buttons.append(InlineKeyboardButton(label, callback_data=f"page_{mode_key}_{target_base}_{i}"))
     
     return InlineKeyboardMarkup([buttons])
 
-# ================== INLINE HANDLER (INSTANT CLICK) ==================
+# Task Async untuk Jalankan Scan Otomatis Begitu Pesan Inline Diklik
+async def auto_scan_task(context: ContextTypes.DEFAULT_TYPE, inline_msg_id: str, mode_key: str, base: str):
+    await asyncio.sleep(0.5) # Delay sebentar agar pesan terkirim sempurna
+    
+    if not clients:
+        await context.bot.edit_message_text(
+            inline_message_id=inline_msg_id,
+            text="❌ error: akun gua limit",
+            parse_mode="HTML"
+        )
+        return
+
+    try:
+        gen_func, lbl = GENERATORS[mode_key]
+        raw_res = gen_func(base)
+        if mode_key == "uncommon":
+            raw_res += gen_canon(base)
+
+        candidates = list(set(raw_res))[:150]
+        avail = await check_usernames_fast(candidates)
+
+        if not avail:
+            await context.bot.edit_message_text(
+                inline_message_id=inline_msg_id,
+                text=f"❌ Gak ada atau akun gua limit jadi gak nemu",
+                parse_mode="HTML"
+            )
+            return
+
+        pages = chunk_results(avail, chunk_size=15)
+        
+        SCAN_CACHE[inline_msg_id] = {
+            "pages": pages,
+            "mode_label": lbl,
+            "base": base,
+            "mode_key": mode_key
+        }
+
+        page_text = (
+            f"hasil scan untuk @{base} ({lbl}) "
+            f"ada {len(avail)} usn\n\n" + 
+            "\n".join(pages[0])
+        )
+        
+        reply_markup = build_pagination_keyboard(0, len(pages), base, mode_key)
+
+        await context.bot.edit_message_text(
+            inline_message_id=inline_msg_id,
+            text=page_text,
+            parse_mode="HTML",
+            reply_markup=reply_markup
+        )
+
+    except Exception as e:
+        logger.error(f"Error scan: {e}", exc_info=True)
+        await context.bot.edit_message_text(
+            inline_message_id=inline_msg_id,
+            text=f"❌ Error:</b> <code>{e}</code>",
+            parse_mode="HTML"
+        )
+
+# ================== INLINE HANDLER ==================
 async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.inline_query.query.strip()
     uid = update.inline_query.from_user.id
@@ -193,11 +244,10 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineQueryResultArticle(
                 id="help",
                 title="misal",
-                description="anjay, tamping anjay, tamdal anjay, uncommon anjay, ganhur anjay, dll",
+                description="anjay, tamping anjay, tamhur anjay, uncommon anjay, ganhur anjay, dll",
                 input_message_content=InputTextMessageContent(
                     "Contoh penggunaan:\n"
-                    "`Adnan` buat scan tamhur biasa\n"
-                    "`<spesifik> adnan` buat scan yang spesifik"
+                    " `@sunless2bot adnan` (buat tamhur)\n"
                 )
             )
         ]
@@ -215,108 +265,59 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         base = query.replace("@", "")
         mode_label = "Tamhur"
 
-    # Pesan Awal (Langsung terkirim saat diklik di inline, tanpa nunggu scan)
-    initial_text = (
-        f"⏳ MEMULAI SCAN UNTUK @{base}\n"
-        f"Mode: {mode_label}\n\n"
-        f"Tunggu bentar, akun sedang memeriksa ketersediaan..."
-    )
+    # ID Unik untuk pesan inline
+    inline_msg_id_placeholder = f"scan_{base}_{int(time.time() * 1000)}"
 
-    # Tombol interaktif awal
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🔎 Mulai proses...", callback_data=f"startscan_{mode_key}_{base}")
-    ]])
+    # Pesan Awal (Langsung muncul saat diklik di inline chat)
+    loading_text = (
+        "bntr lagi nyari"
+    )
 
     results = [
         InlineQueryResultArticle(
-            id=f"init_{base}_{int(time.time())}",
-            title=f"Mulai Scan @{base} ({mode_label})",
-            description=f"Klik buat nyari @{base}",
-            input_message_content=InputTextMessageContent(initial_text, parse_mode="HTML"),
-            reply_markup=keyboard
+            id=inline_msg_id_placeholder,
+            title=f"Scan @{base} ({mode_label})",
+            description=f"Langsung scan usn @{base}",
+            input_message_content=InputTextMessageContent(loading_text, parse_mode="HTML")
         )
     ]
+    
     await update.inline_query.answer(results, cache_time=1)
 
-# ================== CALLBACK QUERY HANDLER (LIVE UPDATE & PAGINATION) ==================
+# ================== CHOSEN INLINE RESULT (TRIGGER SCAN AUTOMATICALLY) ==================
+async def chosen_inline_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chosen = update.chosen_inline_result
+    inline_msg_id = chosen.inline_message_id
+    result_id = chosen.result_id
+
+    # Format result_id: scan_base_timestamp
+    parts = result_id.split("_")
+    if len(parts) >= 2:
+        base = parts[1]
+        
+        # Mengecek query asal dari user
+        query_text = chosen.query.strip().split(maxsplit=1)
+        if query_text[0].lower() in GENERATORS and len(query_text) > 1:
+            mode_key = query_text[0].lower()
+        else:
+            mode_key = "tamhur"
+
+        # Jalankan task scan otomatis di background
+        asyncio.create_task(auto_scan_task(context, inline_msg_id, mode_key, base))
+
+# ================== CALLBACK QUERY HANDLER (PAGINATION) ==================
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
     inline_msg_id = query.inline_message_id
 
-    # 1. Trigger Mulai Scan Secara Otomatis / Manual
-    if data.startswith("startscan_"):
-        _, mode_key, base = data.split("_", 2)
-        await query.answer("Memulai scan...")
-
-        if not clients:
-            await context.bot.edit_message_text(
-                inline_message_id=inline_msg_id,
-                text="❌ ERROR: akun gua yang error anjay, coba chat akun gw",
-                parse_mode="HTML"
-            )
-            return
-
-        # Update Tampilan ke Mode Scanning Active
-        await context.bot.edit_message_text(
-            inline_message_id=inline_msg_id,
-            text=f"🔄 SEDANG MENCARI VARIASI @{base}...\n\nSistem sedang memproses username...",
-            parse_mode="HTML"
-        )
-
-        gen_func, lbl = GENERATORS[mode_key]
-        raw_res = gen_func(base)
-        if mode_key == "uncommon":
-            raw_res += gen_canon(base)
-
-        candidates = list(set(raw_res))[:150] # Mengambil hingga 150 kandidat
-
-        # Melakukan Scanning
-        avail = await check_usernames_fast(candidates)
-
-        if not avail:
-            text_res = f"❌ Ga ada usn {lbl} yang tersedia buat @{base} (atau gak akun gw lagi limit)"
-            await context.bot.edit_message_text(
-                inline_message_id=inline_msg_id,
-                text=text_res,
-                parse_mode="HTML"
-            )
-            return
-
-        # Pecah Hasil menjadi Beberapa Halaman (Pagination)
-        pages = chunk_results(avail, chunk_size=15)
-        
-        # Simpan Cache untuk Navigasi Halaman
-        SCAN_CACHE[inline_msg_id] = {
-            "pages": pages,
-            "mode_label": lbl,
-            "base": base,
-            "mode_key": mode_key
-        }
-
-        # Format Tampilan Halaman Pertama (Page 0)
-        page_text = (
-            f"HASIL SCAN @{base} ({lbl})\n"
-            f"Total Ditemukan: <b>{len(avail)} Username\n\n" + 
-            "\n".join(pages[0])
-        )
-        
-        reply_markup = build_pagination_keyboard(0, len(pages), base, mode_key)
-
-        await context.bot.edit_message_text(
-            inline_message_id=inline_msg_id,
-            text=page_text,
-            parse_mode="HTML",
-            reply_markup=reply_markup
-        )
-
-    # 2. Handler Pindah Halaman (Pagination Click 1, 2, 3...)
-    elif data.startswith("page_"):
+    # Handler Pindah Halaman (Tombol 1, 2, 3...)
+    if data.startswith("page_"):
         _, mode_key, base, page_idx = data.split("_", 3)
         page_idx = int(page_idx)
 
         if inline_msg_id not in SCAN_CACHE:
-            await query.answer("⚠️ Scan ini sudah kadaluarsa. Silakan lakukan scan baru.", show_alert=True)
+            await query.answer("⚠️ Hasil scan ini sudah kadaluarsa. Silakan lakukan scan baru.", show_alert=True)
             return
 
         cache_data = SCAN_CACHE[inline_msg_id]
@@ -328,7 +329,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         page_text = (
-            f"HASIL SCAN @{base} ({lbl}) - {page_idx + 1}/{len(pages)}\n\n" + 
+            f"hasil scan buat @{base} ({lbl}) - {page_idx + 1}/{len(pages)}\n"
+            f"ada {sum(len(p) for p in pages)} usn\n\n" + 
             "\n".join(pages[page_idx])
         )
 
@@ -341,7 +343,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="HTML",
                 reply_markup=reply_markup
             )
-            await query.answer(f" {page_idx + 1}")
+            await query.answer(f"Halaman {page_idx + 1}")
         except Exception:
             await query.answer()
 
@@ -350,7 +352,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id in BANNED_USERS: return
     save_user(user.id)
-    await update.message.reply_text("P anjay")
+    await update.message.reply_text("p anjay")
 
 async def post_init(application):
     logger.info("⚙️ Inisialisasi Telethon sessions...")
@@ -370,6 +372,10 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(InlineQueryHandler(inline_query))
     app.add_handler(CallbackQueryHandler(handle_callback))
+    
+    # Handler bawaan telegram-bot untuk mendeteksi kapan pesan inline berhasil diklik
+    from telegram.ext import ChosenInlineResultHandler
+    app.add_handler(ChosenInlineResultHandler(chosen_inline_result))
 
     logger.info("🚀 Bot berjalan...")
     app.run_polling(drop_pending_updates=True)
