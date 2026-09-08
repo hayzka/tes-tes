@@ -141,12 +141,16 @@ def build_pagination_keyboard(current_page, total_pages, target_base, mode_key):
     return InlineKeyboardMarkup([buttons])
 
 # Task Async yang Menjalankan Scan LIVE Real-Time
+# Task Async yang Menjalankan Scan LIVE Real-Time (Aman dari Rate Limit)
 async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id: str, mode_key: str, base: str):
     if not clients:
-        await context.bot.edit_message_text(
-            inline_message_id=inline_msg_id,
-            text="❌ error: limit akun gua"
-        )
+        try:
+            await context.bot.edit_message_text(
+                inline_message_id=inline_msg_id,
+                text="❌ ERROR: gua limit akun"
+            )
+        except Exception:
+            pass
         return
 
     try:
@@ -175,13 +179,13 @@ async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id:
                             res_str = f"🟢 @{u}"
                             found_avail.append(res_str)
 
-                            # Update teks secara live di Telegram tiap ada penambahan (jeda min 1.5 detik agar tak kena rate limit)
                             now = time.time()
-                            if now - last_update_time > 1.5:
+                            # Jeda minimal 2.5 detik antar edit agar tidak kena FloodControl Telegram
+                            if now - last_update_time > 2.5:
                                 last_update_time = now
                                 live_text = (
-                                    f"scanning @{base} ({lbl})\n"
-                                    f"ada: {len(found_avail)}\n\n" +
+                                    f"Scanning @{base} ({lbl})...\n"
+                                    f"Ditemukan sejauh ini: {len(found_avail)}\n\n" +
                                     "\n".join(found_avail[:15]) +
                                     ("\n..." if len(found_avail) > 15 else "")
                                 )
@@ -190,8 +194,9 @@ async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id:
                                         inline_message_id=inline_msg_id,
                                         text=live_text
                                     )
-                                except Exception:
-                                    pass
+                                except Exception as live_err:
+                                    # Abaikan error edit sementara (misal: rate limit) agar worker tetap jalan
+                                    logger.debug(f"Abaikan live update error: {live_err}")
                             return res_str
                         return None
                     except FloodWaitError as e:
@@ -201,16 +206,57 @@ async def auto_scan_task_live(context: ContextTypes.DEFAULT_TYPE, inline_msg_id:
                         return None
                 return None
 
-        # Jalankan pemeriksaan kandidat
+        # Jalankan pemeriksaan kandidat paralel
         await asyncio.gather(*(worker(u) for u in candidates))
 
         # Jika selesai dan tidak ada yang ketemu
         if not found_avail:
+            try:
+                await context.bot.edit_message_text(
+                    inline_message_id=inline_msg_id,
+                    text=f"❌ Gak ada username yang ketemu atau semua akun sedang limit untuk @{base}."
+                )
+            except Exception:
+                pass
+            return
+
+        # Pecah hasil akhir ke beberapa halaman (Pagination)
+        pages = chunk_results(found_avail, chunk_size=15)
+        
+        SCAN_CACHE[inline_msg_id] = {
+            "pages": pages,
+            "mode_label": lbl,
+            "base": base,
+            "mode_key": mode_key
+        }
+
+        page_text = (
+            f"hasil scan untuk @{base} ({lbl}) "
+            f"ada {len(found_avail)} Username\n\n" + 
+            "\n".join(pages[0])
+        )
+        
+        reply_markup = build_pagination_keyboard(0, len(pages), base, mode_key)
+
+        # Update tampilan hasil akhir secara penuh
+        try:
             await context.bot.edit_message_text(
                 inline_message_id=inline_msg_id,
-                text=f"❌ Gak ada username yang ketemu atau semua akun sedang limit untuk @{base}."
+                text=page_text,
+                reply_markup=reply_markup
             )
-            return
+        except Exception as final_err:
+            logger.error(f"Gagal update hasil akhir: {final_err}")
+
+    except Exception as e:
+        logger.error(f"❌ Error fatal saat scan: {e}", exc_info=True)
+        try:
+            await context.bot.edit_message_text(
+                inline_message_id=inline_msg_id,
+                text=f"❌ Terjadi Error: {e}"
+            )
+        except Exception:
+            pass
 
         # Pecah hasil akhir ke beberapa halaman (Pagination)
         pages = chunk_results(found_avail, chunk_size=15)
