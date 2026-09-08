@@ -174,13 +174,14 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         results = [
             InlineQueryResultArticle(
                 id="help",
-                title="Petunjuk Penggunaan",
-                description="Ketik: @botusername <username_dasar>",
+                title="misal",
+                description="Adnan, tamping adnan, uncommon adnan, tamdal adnan, rata adnan, ganhur adnan, dll",
                 input_message_content=InputTextMessageContent(
                     "Contoh penggunaan:\n"
-                    "• `@botusername anya` (Scan Tamhur Fast - 150 Kandidat)\n"
-                    "• `@botusername switch anya` (Scan Spesifik Switch)\n"
-                    "• `@botusername tamping anya` (Scan Spesifik Tamping)"
+                    "Adnan (Scan tamhur)\n"
+                    "tamping Adnan` (Scan tamping)\n"
+                    "tamdal Adnan (Scan tamdal)\n"
+                    "dkk"
                 )
             )
         ]
@@ -205,7 +206,7 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         scan_title = "Scan Tamhur (Fast Direct)"
 
     if not clients:
-        text_res = "❌ Tidak ada account Telethon aktif untuk scan."
+        text_res = "❌ Tidak ada acc aktif untuk scan."
     else:
         sections = []
         
@@ -222,9 +223,9 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sections.append(f"<b>{lbl.upper()} ({len(avail)}):</b>\n" + "\n".join(avail))
 
         if sections:
-            text_res = f"🔍 <b>HASIL SCAN UNTUK @{base}</b>\n\n" + "\n\n".join(sections)
+            text_res = f"HASIL SCAN UNTUK @{base}\n\n" + "\n\n".join(sections)
         else:
-            text_res = f"❌ Tidak ada username yang tersedia untuk <b>@{base}</b> dari {LIMIT_CANDIDATES} kandidat yang diperiksa."
+            text_res = f"❌ Gak ada atau gak akun gua yang limit jadi ga nemu"
 
     # Potong pesan jika melebihi batas karakter Telegram (4096)
     if len(text_res) > 4000:
@@ -253,7 +254,7 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         LIMIT_PER_TYPE = 50  # 50 kandidat per tipe (Total ~350 kandidat diproses sekali klik)
 
     if not clients:
-        text_res = "❌ Tidak ada account Telethon aktif untuk scan."
+        text_res = "❌ Tidak ada acc aktif untuk scan."
     else:
         sections = []
         
@@ -269,13 +270,13 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sections.append(f"<b>{lbl.upper()} ({len(avail)}):</b>\n" + "\n".join(avail))
 
         if sections:
-            text_res = f"🔍 <b>HASIL SCAN UNTUK @{base}</b>\n\n" + "\n\n".join(sections)
+            text_res = f"HASIL SCAN UNTUK @{base}\n\n" + "\n\n".join(sections)
         else:
-            text_res = f"❌ Tidak ada username yang tersedia untuk <b>@{base}</b> dari total kandidat yang diperiksa."
+            text_res = f"❌ Ga ada atau gak akun gua limit jadi gak nemu"
 
     # Potong pesan jika melebihi batas karakter Telegram (4096)
     if len(text_res) > 4000:
-        text_res = text_res[:3900] + "\n\n⚠️ <i>Hasil dipotong karena melebihi batas panjang pesan Telegram.</i>"
+        text_res = text_res[:3900] + "\n\n⚠️ Hasil dipotong karena melebihi batas panjang pesan Telegram."
 
     results = [
         InlineQueryResultArticle(
@@ -292,12 +293,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id in BANNED_USERS: return
     save_user(user.id)
-    await update.message.reply_text("👋 Bot siap digunakan secara langsung via Inline Mode di room chat mana saja!\n\nKetik di chat: `@botusername namauser`")
+    await update.message.reply_text("Punya @rsunless")
 
 async def post_init(application):
     logger.info("⚙️ Inisialisasi Telethon sessions...")
     await init_clients()
-    logger.info(f"📊 Total akun Telethon aktif: {len(clients)} akun.")
+    logger.info(f"📊 Total akun aktif: {len(clients)} akun.")
 
 def main():
     load_bans()
