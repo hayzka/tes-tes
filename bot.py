@@ -1,4 +1,3 @@
-import os
 import string
 import time
 import logging
@@ -9,8 +8,6 @@ import asyncio
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-
 # Load dotenv jika dijalankan secara lokal
 try:
     from dotenv import load_dotenv
@@ -20,10 +17,13 @@ except ImportError:
 
 from telethon import TelegramClient, functions
 from telethon.errors import FloodWaitError
-from telegram import Update, InlineQueryResultArticle, InputTextMessageContent
+from telegram import (
+    Update, InlineQueryResultArticle, InputTextMessageContent,
+    InlineKeyboardMarkup, InlineKeyboardButton
+)
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, 
-    InlineQueryHandler, ContextTypes, filters
+    InlineQueryHandler, CallbackQueryHandler, ContextTypes, filters
 )
 
 # Configuration from Environment Variables
@@ -42,6 +42,10 @@ client_cooldown = {}
 running_tasks = {}
 client_index = 0
 ALL_USERS = set()
+
+# Temporary Cache untuk Menyimpan Hasil Scan per Message ID untuk Pagination
+# Format: { inline_message_id: { "pages": [str_page1, str_page2, ...], "current_page": 0, "base": str } }
+SCAN_CACHE = {}
 
 # ================== PERSISTENCE ==================
 def load_users():
@@ -106,7 +110,6 @@ async def init_clients():
     if not API_ID or not API_HASH: 
         logger.error("❌ API_ID atau API_HASH kosong!")
         return
-    # Mendukung hingga 20 akun session (acc1.session - acc20.session)
     for i in range(1, 21):
         s = f"{DATA_DIR}acc{i}"
         try:
@@ -134,7 +137,6 @@ async def check_usernames_fast(usernames):
     if not usernames or not clients:
         return []
     
-    # Menyesuaikan kapasitas kerja paralel dengan jumlah akun Telethon
     sem = asyncio.Semaphore(len(clients) * 3)
     
     async def worker(u):
@@ -152,15 +154,30 @@ async def check_usernames_fast(usernames):
                 except FloodWaitError as e:
                     client_cooldown[c] = time.time() + e.seconds
                     continue
-                except:
+                except Exception:
                     return None
             return None
 
     results = await asyncio.gather(*(worker(u) for u in usernames))
     return [r for r in results if r]
 
-# ================== INLINE HANDLER ==================
-# ================== INLINE HANDLER ==================
+# Helper Function untuk Membagi List Hasil Menjadi Beberapa Halaman (Pagination)
+def chunk_results(items, chunk_size=15):
+    return [items[i:i + chunk_size] for i in range(0, len(items), chunk_size)]
+
+def build_pagination_keyboard(current_page, total_pages, target_base, mode_key):
+    if total_pages <= 1:
+        return None
+    
+    buttons = []
+    for i in range(total_pages):
+        label = f"• {i+1} •" if i == current_page else f"{i+1}"
+        # Callback data format: page_mode_base_pageIndex
+        buttons.append(InlineKeyboardButton(label, callback_data=f"page_{mode_key}_{target_base}_{i}"))
+    
+    return InlineKeyboardMarkup([buttons])
+
+# ================== INLINE HANDLER (INSTANT CLICK) ==================
 async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.inline_query.query.strip()
     uid = update.inline_query.from_user.id
@@ -175,13 +192,11 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineQueryResultArticle(
                 id="help",
                 title="misal",
-                description="Anjay, tamping anjay, uncommon anjay, tamdal anjay, rata anjay, ganhur anjay, dll",
+                description="anjay, tamping anjay, tamdal anjay, uncommon anjay, ganhur anjay, dll",
                 input_message_content=InputTextMessageContent(
                     "Contoh penggunaan:\n"
-                    "anjay (scan tamhur)\n"
-                    "tamping anjay (Scan tamping)\n"
-                    "tamdal anjay (Scan tamdal)\n"
-                    "dkk"
+                    "`Adnan` buat scan tamhur biasa\n"
+                    "`<spesifik> adnan` buat scan yang spesifik"
                 )
             )
         ]
@@ -190,110 +205,151 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     parts = query.split(maxsplit=1)
     
-    # 1. Pengecekan Mode Spesifik (misal: @bot switch anya / @bot tamping anya)
     if parts[0].lower() in GENERATORS and len(parts) > 1:
         mode_key = parts[0].lower()
-        target_generators = {mode_key: GENERATORS[mode_key]}
         base = parts[1].replace("@", "")
-        LIMIT_CANDIDATES = 150
-        scan_title = f"Scan {GENERATORS[mode_key][1]}"
-
-    # 2. Mode Direct / Langsung (misal: @bot anya) -> KHUSUS TAMHUR
+        mode_label = GENERATORS[mode_key][1]
     else:
-        target_generators = {"tamhur":["tamhur"]}
+        mode_key = "tamhur"
         base = query.replace("@", "")
-        LIMIT_CANDIDATES = 150  # Limit tinggi karena fokus ke 1 metode
-        scan_title = "Scan tamhur"
+        mode_label = "Tamhur"
 
-    if not clients:
-        text_res = "❌ Tidak ada acc aktif untuk scan."
-    else:
-        sections = []
-        
-        for key, (gen_func, lbl) in target_generators.items():
-            raw_res = gen_func(base)
-            if key == "uncommon":
-                raw_res += gen_canon(base)
-            
-            # Mengambil hingga 150 kandidat
-            candidates = list(set(raw_res))[:LIMIT_CANDIDATES]
-            avail = await check_usernames_fast(candidates)
-            
-            if avail:
-                sections.append(f"<b>{lbl.upper()} ({len(avail)}):</b>\n" + "\n".join(avail))
+    # Pesan Awal (Langsung terkirim saat diklik di inline, tanpa nunggu scan)
+    initial_text = (
+        f"⏳ MEMULAI SCAN UNTUK @{base}\n"
+        f"Mode: {mode_label}\n\n"
+        f"Tunggu bentar, akun sedang memeriksa ketersediaan..."
+    )
 
-        if sections:
-            text_res = f"HASIL SCAN UNTUK @{base}\n\n" + "\n\n".join(sections)
-        else:
-            text_res = f"❌ Gak ada atau gak akun gua yang limit jadi ga nemu"
-
-    # Potong pesan jika melebihi batas karakter Telegram (4096)
-    if len(text_res) > 4000:
-        text_res = text_res[:3900] + "\n\n⚠️ Hasil dipotong karena melebihi batas panjang pesan Telegram."
+    # Tombol interaktif awal
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔎 Mulai proses...", callback_data=f"startscan_{mode_key}_{base}")
+    ]])
 
     results = [
         InlineQueryResultArticle(
-            id=f"scan_{base}_{int(time.time())}",
-            title=f"{scan_title} untuk @{base}",
-            description=f"Memeriksa hingga {LIMIT_CANDIDATES} variasi username",
-            input_message_content=InputTextMessageContent(text_res, parse_mode="HTML")
+            id=f"init_{base}_{int(time.time())}",
+            title=f"Mulai Scan @{base} ({mode_label})",
+            description=f"Klik buat nyari @{base}",
+            input_message_content=InputTextMessageContent(initial_text, parse_mode="HTML"),
+            reply_markup=keyboard
         )
     ]
     await update.inline_query.answer(results, cache_time=1)
-    
-    # Pengaturan Mode Spesifik vs Mode All-in-One
-    if parts[0].lower() in GENERATORS and len(parts) > 1:
-        target_generators = {parts[0].lower(): GENERATORS[parts[0].lower()]}
-        base = parts[1].replace("@", "")
-        LIMIT_PER_TYPE = 150 # Limit besar jika memilih 1 tipe saja
-    else:
-        target_generators = {
-            k: GENERATORS[k] for k in ["tamping", "tamhur", "ganhur", "uncommon", "switch", "rata", "kurhur"]
+
+# ================== CALLBACK QUERY HANDLER (LIVE UPDATE & PAGINATION) ==================
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    inline_msg_id = query.inline_message_id
+
+    # 1. Trigger Mulai Scan Secara Otomatis / Manual
+    if data.startswith("startscan_"):
+        _, mode_key, base = data.split("_", 2)
+        await query.answer("Memulai scan...")
+
+        if not clients:
+            await context.bot.edit_message_text(
+                inline_message_id=inline_msg_id,
+                text="❌ ERROR: akun gua yang error anjay, coba chat akun gw",
+                parse_mode="HTML"
+            )
+            return
+
+        # Update Tampilan ke Mode Scanning Active
+        await context.bot.edit_message_text(
+            inline_message_id=inline_msg_id,
+            text=f"🔄 SEDANG MENCARI VARIASI @{base}...\n\nSistem sedang memproses username...",
+            parse_mode="HTML"
+        )
+
+        gen_func, lbl = GENERATORS[mode_key]
+        raw_res = gen_func(base)
+        if mode_key == "uncommon":
+            raw_res += gen_canon(base)
+
+        candidates = list(set(raw_res))[:150] # Mengambil hingga 150 kandidat
+
+        # Melakukan Scanning
+        avail = await check_usernames_fast(candidates)
+
+        if not avail:
+            text_res = f"❌ Ga ada usn {lbl} yang tersedia buat @{base} (atau gak akun gw lagi limit)"
+            await context.bot.edit_message_text(
+                inline_message_id=inline_msg_id,
+                text=text_res,
+                parse_mode="HTML"
+            )
+            return
+
+        # Pecah Hasil menjadi Beberapa Halaman (Pagination)
+        pages = chunk_results(avail, chunk_size=15)
+        
+        # Simpan Cache untuk Navigasi Halaman
+        SCAN_CACHE[inline_msg_id] = {
+            "pages": pages,
+            "mode_label": lbl,
+            "base": base,
+            "mode_key": mode_key
         }
-        base = query.replace("@", "")
-        LIMIT_PER_TYPE = 50  # 50 kandidat per tipe (Total ~350 kandidat diproses sekali klik)
 
-    if not clients:
-        text_res = "❌ Tidak ada acc aktif untuk scan."
-    else:
-        sections = []
-        
-        for key, (gen_func, lbl) in target_generators.items():
-            raw_res = gen_func(base)
-            if key == "uncommon":
-                raw_res += gen_canon(base)
-            
-            candidates = list(set(raw_res))[:LIMIT_PER_TYPE]
-            avail = await check_usernames_fast(candidates)
-            
-            if avail:
-                sections.append(f"<b>{lbl.upper()} ({len(avail)}):</b>\n" + "\n".join(avail))
-
-        if sections:
-            text_res = f"HASIL SCAN UNTUK @{base}\n\n" + "\n\n".join(sections)
-        else:
-            text_res = f"❌ Ga ada atau gak akun gua limit jadi gak nemu"
-
-    # Potong pesan jika melebihi batas karakter Telegram (4096)
-    if len(text_res) > 4000:
-        text_res = text_res[:3900] + "\n\n⚠️ Hasil dipotong karena melebihi batas panjang pesan Telegram."
-
-    results = [
-        InlineQueryResultArticle(
-            id=f"scan_{base}_{int(time.time())}",
-            title=f"Scan @{base}",
-            description=f"Memeriksa puluhan hingga ratusan variasi username untuk @{base}",
-            input_message_content=InputTextMessageContent(text_res, parse_mode="HTML")
+        # Format Tampilan Halaman Pertama (Page 0)
+        page_text = (
+            f"HASIL SCAN @{base} ({lbl})\n"
+            f"Total Ditemukan: <b>{len(avail)} Username\n\n" + 
+            "\n".join(pages[0])
         )
-    ]
-    await update.inline_query.answer(results, cache_time=1)
+        
+        reply_markup = build_pagination_keyboard(0, len(pages), base, mode_key)
+
+        await context.bot.edit_message_text(
+            inline_message_id=inline_msg_id,
+            text=page_text,
+            parse_mode="HTML",
+            reply_markup=reply_markup
+        )
+
+    # 2. Handler Pindah Halaman (Pagination Click 1, 2, 3...)
+    elif data.startswith("page_"):
+        _, mode_key, base, page_idx = data.split("_", 3)
+        page_idx = int(page_idx)
+
+        if inline_msg_id not in SCAN_CACHE:
+            await query.answer("⚠️ Scan ini sudah kadaluarsa. Silakan lakukan scan baru.", show_alert=True)
+            return
+
+        cache_data = SCAN_CACHE[inline_msg_id]
+        pages = cache_data["pages"]
+        lbl = cache_data["mode_label"]
+
+        if page_idx >= len(pages):
+            await query.answer()
+            return
+
+        page_text = (
+            f"HASIL SCAN @{base} ({lbl}) - {page_idx + 1}/{len(pages)}\n\n" + 
+            "\n".join(pages[page_idx])
+        )
+
+        reply_markup = build_pagination_keyboard(page_idx, len(pages), base, mode_key)
+
+        try:
+            await context.bot.edit_message_text(
+                inline_message_id=inline_msg_id,
+                text=page_text,
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+            await query.answer(f" {page_idx + 1}")
+        except Exception:
+            await query.answer()
 
 # ================== COMMAND HANDLERS ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id in BANNED_USERS: return
     save_user(user.id)
-    await update.message.reply_text("Punya @rsunless")
+    await update.message.reply_text("P anjay")
 
 async def post_init(application):
     logger.info("⚙️ Inisialisasi Telethon sessions...")
@@ -312,6 +368,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(InlineQueryHandler(inline_query))
+    app.add_handler(CallbackQueryHandler(handle_callback))
 
     logger.info("🚀 Bot berjalan...")
     app.run_polling(drop_pending_updates=True)
