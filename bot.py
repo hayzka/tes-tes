@@ -337,7 +337,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=page_text,
                 reply_markup=reply_markup
             )
-            await query.answer(f"Halaman {page_idx + 1}")
+            await query.answer(f"{page_idx + 1}")
         except Exception:
             await query.answer()
 
@@ -346,7 +346,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id in BANNED_USERS: return
     save_user(user.id)
-    await update.message.reply_text("Punya @rsunless")
+    await update.message.reply_text("P")
 
 async def post_init(application):
     logger.info("⚙️ Inisialisasi Telethon sessions...")
