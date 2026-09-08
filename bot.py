@@ -279,7 +279,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not found_avail:
             await context.bot.edit_message_text(
                 inline_message_id=inline_msg_id,
-                text=f"❌ Gak ada atau gak akun gua limit jadi gak nemu"
+                text=f"❌ Gak ada atau akun gua limit jadi gak nemu"
             )
             return
 
