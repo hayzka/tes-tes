@@ -196,14 +196,14 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_generators = {mode_key: GENERATORS[mode_key]}
         base = parts[1].replace("@", "")
         LIMIT_CANDIDATES = 150
-        scan_title = f"Scan Spesifik {GENERATORS[mode_key][1]}"
+        scan_title = f"Scan {GENERATORS[mode_key][1]}"
 
     # 2. Mode Direct / Langsung (misal: @bot anya) -> KHUSUS TAMHUR
     else:
-        target_generators = {"tamhur": GENERATORS["tamhur"]}
+        target_generators = {"tamhur":["tamhur"]}
         base = query.replace("@", "")
         LIMIT_CANDIDATES = 150  # Limit tinggi karena fokus ke 1 metode
-        scan_title = "Scan Tamhur (Fast Direct)"
+        scan_title = "Scan tamhur"
 
     if not clients:
         text_res = "❌ Tidak ada acc aktif untuk scan."
@@ -229,7 +229,7 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Potong pesan jika melebihi batas karakter Telegram (4096)
     if len(text_res) > 4000:
-        text_res = text_res[:3900] + "\n\n⚠️ <i>Hasil dipotong karena melebihi batas panjang pesan Telegram.</i>"
+        text_res = text_res[:3900] + "\n\n⚠️ Hasil dipotong karena melebihi batas panjang pesan Telegram."
 
     results = [
         InlineQueryResultArticle(
