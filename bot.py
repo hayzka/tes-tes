@@ -324,8 +324,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         page_text = (
-            f" hasil scan @{base} ({lbl}) - Halaman {page_idx + 1}/{len(pages)}\n"
-            f"Total ditemukan: {sum(len(p) for p in pages)} usn\n\n" + 
+            f" hasil scan @{base} ({lbl}) ada  {sum(len(p) for p in pages)} usn\n"
+            f"{page_idx + 1}/{len(pages)}\n\n" + 
             "\n".join(pages[page_idx])
         )
 
