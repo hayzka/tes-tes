@@ -8,10 +8,6 @@ import asyncio
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Sembunyikan log internal MTProtoSender Telethon agar terminal bersih
-logging.getLogger("telethon.network.mtprotosender").setLevel(logging.WARNING)
-logging.getLogger("telethon.network.telegrambarebodysender").setLevel(logging.WARNING)
-
 # Load dotenv jika dijalankan secara lokal
 try:
     from dotenv import load_dotenv
@@ -19,8 +15,6 @@ try:
 except ImportError:
     pass
 
-from telethon import TelegramClient, functions
-from telethon.errors import FloodWaitError
 from telegram import (
     Update, InlineQueryResultArticle, InputTextMessageContent,
     InlineKeyboardMarkup, InlineKeyboardButton
@@ -31,8 +25,6 @@ from telegram.ext import (
 )
 
 # Configuration from Environment Variables
-API_ID = os.getenv("API_ID")
-API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
@@ -41,13 +33,36 @@ BAN_FILE = f"{DATA_DIR}banned.txt"
 USER_FILE = f"{DATA_DIR}users.txt"
 
 BANNED_USERS = set()
-clients = []
-client_cooldown = {}
-client_index = 0
 ALL_USERS = set()
 
-# Cache sementara hasil scan per inline message id
+# Cache sementara hasil scan per inline message id (untuk pagination)
 SCAN_CACHE = {}
+
+# ================== MEMORY CACHING SYSTEM ==================
+# Menyimpan hasil scan berdasarkan (mode_key, base_username)
+# Format: { "mode_base": { "timestamp": float, "results": [str] } }
+SCAN_MEM_CACHE = {}
+CACHE_TTL = 3600  # Durasi simpan cache: 1 jam (3600 detik)
+
+def get_from_cache(mode_key: str, base: str):
+    cache_key = f"{mode_key}_{base.lower()}"
+    if cache_key in SCAN_MEM_CACHE:
+        item = SCAN_MEM_CACHE[cache_key]
+        # Cek apakah cache masih belum kadaluarsa (masih di bawah 1 jam)
+        if time.time() - item["timestamp"] < CACHE_TTL:
+            logger.info(f"⚡ Cache HIT untuk @{base} ({mode_key})")
+            return item["results"]
+        else:
+            del SCAN_MEM_CACHE[cache_key] # Hapus jika sudah kadaluarsa
+    return None
+
+def save_to_cache(mode_key: str, base: str, results: list):
+    cache_key = f"{mode_key}_{base.lower()}"
+    SCAN_MEM_CACHE[cache_key] = {
+        "timestamp": time.time(),
+        "results": results
+    }
+    logger.info(f"💾 Hasil scan @{base} ({mode_key}) disimpan ke cache.")
 
 # ================== PERSISTENCE ==================
 def load_users():
@@ -102,34 +117,7 @@ GENERATORS = {
     "vokal": (gen_vokal, "vokal"),
 }
 
-# ================== CORE LOGIC ==================
-async def init_clients():
-    if not API_ID or not API_HASH: 
-        logger.error("❌ API_ID atau API_HASH kosong!")
-        return
-    for i in range(1, 21):
-        s = f"{DATA_DIR}acc{i}"
-        try:
-            c = TelegramClient(s, int(API_ID), API_HASH)
-            await c.connect()
-            if await c.is_user_authorized():
-                clients.append(c)
-                client_cooldown[c] = 0
-                logger.info(f"✅ acc{i} Ready")
-            else: 
-                await c.disconnect()
-        except Exception: 
-            pass
-
-def get_available_client():
-    global client_index
-    now = time.time()
-    available = [c for c in clients if client_cooldown[c] <= now]
-    if not available: return None
-    client = available[client_index % len(available)]
-    client_index += 1
-    return client
-
+# ================== HELPER FUNCTIONS ==================
 def chunk_results(items, chunk_size=15):
     return [items[i:i + chunk_size] for i in range(0, len(items), chunk_size)]
 
@@ -182,7 +170,6 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     loading_text = f"Klik tombol di bawah untuk mulai scan @{base} ({mode_label})..."
 
-    # Tombol interaktif pemicu khusus Channel & Grup
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("Mulai Scan", callback_data=f"runlive_{mode_key}_{base}")
     ]])
@@ -210,38 +197,31 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _, mode_key, base = data.split("_", 2)
         await query.answer("Memulai scan...")
 
-        if not clients:
-            await context.bot.edit_message_text(
-                inline_message_id=inline_msg_id,
-                text="❌ acc gua limit"
-            )
-            return
+        gen_func, lbl = GENERATORS.get(mode_key, (gen_tamhur, "tamhur"))
 
-        gen_func, lbl = GENERATORS.get(mode_key, (gen_tamhur, "Tamhur"))
-        raw_res = gen_func(base)
-        if mode_key == "uncommon":
-            raw_res += gen_canon(base)
+        # CEK MEMORY CACHE TERLEBIH DAHULU
+        cached_res = get_from_cache(mode_key, base)
+        if cached_res is not None:
+            found_avail = cached_res
+        else:
+            raw_res = gen_func(base)
+            if mode_key == "uncommon":
+                raw_res += gen_canon(base)
 
-        candidates = list(set(raw_res))[:150]
-        found_avail = []
-        last_update_time = time.time()
-        sem = asyncio.Semaphore(len(clients) * 3)
+            candidates = list(set(raw_res))[:150]
+            found_avail = []
+            last_update_time = time.time()
+            sem = asyncio.Semaphore(15)
 
-        async def worker(u):
-            nonlocal last_update_time
-            async with sem:
-                for _ in range(2):
-                    c = get_available_client()
-                    if not c:
-                        await asyncio.sleep(0.1)
-                        continue
+            async def worker(u):
+                nonlocal last_update_time
+                async with sem:
                     try:
-                        ok = await asyncio.wait_for(
-                            c(functions.account.CheckUsernameRequest(u)), 
-                            timeout=3.0
-                        )
-                        await asyncio.sleep(0.15)
-                        if ok:
+                        await context.bot.get_chat(f"@{u}")
+                        return None
+                    except Exception as e:
+                        err_str = str(e).lower()
+                        if "chat not found" in err_str:
                             res_str = f"🟢 @{u}"
                             found_avail.append(res_str)
 
@@ -263,18 +243,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     pass
                             return res_str
                         return None
-                    except (asyncio.TimeoutError, FloodWaitError) as e:
-                        if isinstance(e, FloodWaitError):
-                            client_cooldown[c] = time.time() + e.seconds
-                        else:
-                            client_cooldown[c] = time.time() + 5
-                        continue
-                    except Exception:
-                        return None
-                return None
 
-        # Jalankan pindaian paralel
-        await asyncio.gather(*(worker(u) for u in candidates))
+            await asyncio.gather(*(worker(u) for u in candidates))
+            # Simpan hasil scan baru ke memori
+            save_to_cache(mode_key, base, found_avail)
 
         if not found_avail:
             await context.bot.edit_message_text(
@@ -293,7 +265,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
 
         page_text = (
-            f"hasil scan untuk @{base} ({lbl})"
+            f"hasil scan untuk @{base} ({lbl})\n"
             f"ada {len(found_avail)} usn\n\n" + 
             "\n".join(pages[0])
         )
@@ -348,11 +320,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_user(user.id)
     await update.message.reply_text("P")
 
-async def post_init(application):
-    logger.info("⚙️ Inisialisasi Telethon sessions...")
-    await init_clients()
-    logger.info(f"📊 Total akun aktif: {len(clients)} akun.")
-
 def main():
     load_bans()
     load_users()
@@ -361,13 +328,13 @@ def main():
         logger.error("❌ BOT_TOKEN tidak ditemukan di Environment Variable!")
         return
         
-    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(InlineQueryHandler(inline_query))
     app.add_handler(CallbackQueryHandler(handle_callback))
 
-    logger.info("🚀 Bot berjalan...")
+    logger.info("🚀 Bot berjalan menggunakan Bot API resmi (Memory Caching Active)...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
