@@ -259,7 +259,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                         inline_message_id=inline_msg_id,
                                         text=live_text
                                     )
-                                meexcept Exception:
+                                except Exception:
                                     pass
                             return res_str
                         return None
