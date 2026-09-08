@@ -4,13 +4,12 @@ import time
 import logging
 import re
 import asyncio
-import nest_asyncio
 
 # Setup logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-nest_asyncio.apply()
+
 
 # Load dotenv jika dijalankan secara lokal
 try:
